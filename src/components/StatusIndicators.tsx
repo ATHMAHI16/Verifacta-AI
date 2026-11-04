@@ -9,7 +9,13 @@ import {
   Archive,
   FileEdit,
 } from 'lucide-react';
-import { VerificationState, PolicyStatus, ReviewStatus, RuleSeverity } from '../types';
+import {
+  VerificationState,
+  PolicyStatus,
+  ReviewStatus,
+  RuleSeverity,
+  CandidateRuleStatus,
+} from '../types';
 
 export const FourStateIndicator: React.FC<{ state: VerificationState }> = ({ state }) => {
   switch (state) {
@@ -39,6 +45,42 @@ export const FourStateIndicator: React.FC<{ state: VerificationState }> = ({ sta
         <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 whitespace-nowrap shrink-0">
           <HelpCircle className="w-3.5 h-3.5 text-violet-600 shrink-0" />
           <span>Ambiguous</span>
+        </span>
+      );
+  }
+};
+
+export const CandidateStatusIndicator: React.FC<{ status: CandidateRuleStatus }> = ({
+  status,
+}) => {
+  switch (status) {
+    case 'Approved':
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 whitespace-nowrap shrink-0">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span>Approved</span>
+        </span>
+      );
+    case 'Rejected':
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 whitespace-nowrap shrink-0">
+          <XCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span>Rejected</span>
+        </span>
+      );
+    case 'Needs Clarification':
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 whitespace-nowrap shrink-0">
+          <HelpCircle className="w-3.5 h-3.5 text-violet-600 shrink-0" />
+          <span>Needs Clarification</span>
+        </span>
+      );
+    case 'Pending':
+    default:
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 whitespace-nowrap shrink-0">
+          <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+          <span>Pending</span>
         </span>
       );
   }

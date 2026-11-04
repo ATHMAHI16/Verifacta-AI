@@ -1,111 +1,107 @@
-# Verifacta AI — Phase 1: Application Foundation
+# Verifacta AI — Phase 1A: Policy Governance & Synchronization Upgrade
 
-Verifacta AI is an enterprise brand governance and content compliance platform that enables organizations to compile brand guidelines into structured rules, verify marketing copy using a deterministic four-state evidence model, stress-test policies against adversarial edge cases, and maintain a comprehensive review audit trail.
+Phase 1A upgrades the **Policy Compiler → Policy Library → Content Verification** governance pipeline by introducing structured **Compilation Sessions**, strict ambiguity gates, a two-stage **Review Compilation & Publish Policy** workflow, immutable **Policy Version History**, and historical rule snapshots on **Audit Trail** records.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following architectural and product workflow decisions were confirmed during Phase 1 alignment and govern how modules interact across the platform:
+> The following governance rules were confirmed during Phase 1A planning and define the compilation, publication, and versioning boundaries:
 
-- **Compiler-to-Library Sync**: Approving extracted rules in the **Policy Compiler** promotes them directly into the target policy inside the **Policy Library**, immediately making those rules active for verification and red-team testing.
-- **Verification-to-Audit Pipeline**: Running a **Content Verification** automatically logs a new review record into the **Audit Trail** with a full content snapshot, policy version reference, and four-state findings, ready for human reviewer sign-off (`Approve`, `Request Revision`, or `Escalate`).
-- **State Persistence & Demo Reset**: All policies, compiled rules, verification logs, red-team runs, and workspace settings persist in `localStorage` so workflows survive browser refreshes, paired with a prominent **Reset Demo Data** control to restore the baseline dataset at any time.
-- **Transparent Simulation Posture**: In accordance with Phase 1 specifications, rule extraction, content verification, red-team scenario evaluation, and audit logging operate on deterministic rule-matching engines and realistic sample datasets, with clear simulation indicators rather than unverified AI claims.
+- **Strict Session Completion Gate**: A Compilation Session can only be published once **every** candidate rule in that session has been explicitly reviewed (`Approved` or `Rejected`), with zero rules remaining in `Pending` or `Needs Clarification`, and at least one `Approved` rule. Incomplete sessions can be saved as drafts at any time.
+- **Append-Based Rule Merging & Immutable Snapshots**: Publishing a Compilation Session to an existing policy appends the newly approved session rules to the policy's existing active rule set, increments the policy's semantic version, and stores an immutable snapshot of the previous published version in `versionHistory` without ever overwriting historical versions.
+- **Integrated Version History & Switcher**: Inside the **Policy Library** detail view, users can switch between the **Active Rules**, **Draft Rules**, and **Version History** tabs, inspect the full rule snapshot and changelog of any historical version, and promote draft changes only through explicit publication.
+- **Active-Only Verification & Immutable Audit Snapshots**: **Content Verification** evaluates content exclusively against `Active` published policies and embeds an immutable `ruleSnapshot` inside each generated **Audit Trail** record so subsequent policy publications never alter historical reviews.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Provides legal, compliance, and brand marketing teams with a unified workspace to manage corporate communication policies, extract structured rules from raw brand guidelines, verify draft marketing assets against specific policy clauses, run red-team edge-case simulations, and inspect historical compliance decisions.
-- **Target Audience / Persona**: Brand Governance Directors, Marketing Compliance Officers, Legal Reviewers, and Content Operations Leads at mid-to-large enterprises.
-- **Key Value**: Replaces subjective, manual spreadsheet reviews with clause-level, evidence-grounded compliance verification using four explicit classification states (**Supported**, **Contradicted**, **Unverified**, and **Ambiguous**).
+- **What It Does**: Replaces immediate single-rule promotion with an enterprise-grade two-stage compilation lifecycle. Compliance engineers extract candidate rules into a uniquely identified **Compilation Session** (`CS-2026-XXXX`), resolve ambiguous wording before approval, save incomplete work as drafts, review the full session summary on a dedicated **Review Compilation** screen, and explicitly publish a new immutable version to the **Policy Library**.
+- **Key Governance Guarantees**:
+  1. **No Unresolved Ambiguity**: Rules flagged as ambiguous or `Needs Clarification` cannot be approved or published until their wording is edited/clarified and marked resolved.
+  2. **No Accidental Live Mutation**: Approving an individual rule stages it inside the Compilation Session (`approvedBy`, `approvedAt`) rather than mutating the live active policy mid-review.
+  3. **Idempotent Publication**: Each Compilation Session and candidate rule tracks publication state (`status: 'Published'`, `publishedVersion`), preventing duplicate promotion of the same candidate or double-publishing of a session.
+  4. **Non-Destructive Storage Migration**: Existing `localStorage` data from Phase 1 is automatically migrated on startup to add `versionHistory`, compilation sessions, and audit rule snapshots without erasing user changes.
 
 ---
 
 ## 2. User Experience & Visual Design
 
 ### Key User Flows
-1. **Executive Overview & Quick Triage**: Users land on the **Overview** dashboard displaying high-level KPIs (Total Policies, Content Items Reviewed, Issues Detected, Pending Human Reviews), verification trend charts, policy status breakdowns, recent flagged content, and 1-click quick actions to create a policy or verify content.
-2. **Policy Management & Rule Inspection**: In **Policy Library**, users search, filter (`Draft`, `Active`, `Archived`), create, edit, archive, and drill into detailed policy views showing structured rules, severity levels, and required evidence sources.
-3. **Guideline Compilation**: In **Policy Compiler**, users paste raw brand guidelines or load sample templates, run deterministic extraction, edit extracted rule clauses, flag ambiguous wording, and approve rules to push them directly into a selected Policy Library document.
-4. **Four-State Content Verification**: In **Content Verification**, users enter a content title, select an active policy, and input marketing copy (or load pre-built test drafts). Clicking **Verify Content** evaluates the copy and displays clause-by-clause findings categorized into **Supported**, **Contradicted**, **Unverified**, and **Ambiguous**, complete with excerpt highlighting, evidence references, confidence scores, and an automatic Audit Trail entry.
-5. **Adversarial Red-Team Testing**: In **Red-Team Testing**, users select a policy, generate or add hypothetical edge-case scenarios, compare expected vs. simulated outcomes, and inspect identified policy coverage gaps.
-6. **Audit Trail & Human Sign-Off**: In **Audit Trail**, users filter historical and newly generated reviews, open a comprehensive detail drawer/view showing the immutable content snapshot, policy version, evidence citations, and findings, and record a final human review decision.
-
-### Visual Identity & Theme
-- **Aesthetic Direction**: Utilitarian enterprise precision inspired by high-trust compliance and financial governance systems—clean architectural structure, high scannability, zero decorative clutter.
-- **Color Palette & Mood (60-30-10 Discipline)**:
-  - *60% Dominant Canvas*: Light neutral workspace (`#F8FAFC` / `slate-50`) with crisp white (`#FFFFFF`) primary surfaces and single-level 1px structural borders (`#E2E8F0` / `slate-200`).
-  - *30% Structural Surfaces*: Deep navy/charcoal persistent sidebar (`#0F172A` / `slate-900`) with muted slate navigation text (`#94A3B8`) and crisp white active states.
-  - *10% Accent & Semantic Budget*: Royal blue (`#2563EB` / `blue-600`) and deep violet (`#4F46E5` / `indigo-600`) for primary interactive controls and focus states.
-  - *Four-State Semantic System (Paired with explicit icons & text labels)*:
-    - **Supported**: Emerald (`#16A34A` / `emerald-700`)
-    - **Contradicted**: Crimson (`#DC2626` / `red-700`)
-    - **Unverified**: Amber (`#D97706` / `amber-700`)
-    - **Ambiguous**: Violet (`#7C3AED` / `violet-700`)
-- **Typography & Hierarchy**:
-  - *Display & Navigation*: `Plus Jakarta Sans` (SemiBold/Bold 600–700) for crisp structural headings and workspace titles.
-  - *Body & Dense UI*: `Public Sans` (Regular 400, Medium 500) for high legibility across policy clauses, excerpts, and tables.
-  - *Metrics, Versions & IDs*: `JetBrains Mono` with `tabular-nums` for review IDs (`REV-2026-0842`), policy versions (`v2.4.0`), timestamps, and confidence percentages.
-- **Component Styling & Layout**:
-  - Desktop-first 1440px layout featuring a persistent `$260\text{px}$` dark sidebar (collapsible drawer on mobile/tablet), a clean top bar (current page title, global search input, notifications popover, user profile menu, and primary context action), and a single-elevation content grid.
-  - Metadata (categories, versions, timestamps) rendered as clean unboxed text with middot (`·`) separators—avoiding cluttered pill sandwiches or thick left accent borders.
+1. **Compilation Session Management (`Policy Compiler`)**:
+   - Starting an extraction creates a new **Compilation Session** with a unique ID (e.g., `CS-2026-0102`), timestamp, source guideline title/text, target policy, and session status (`In Review` | `Draft Saved` | `Published`).
+   - Users can switch between active/saved Compilation Sessions via a session selector bar.
+   - Each candidate rule displays its source excerpt, suggested code, and one of four states: **Pending**, **Approved** (with `approvedBy` and `approvedAt` metadata), **Rejected**, or **Needs Clarification**.
+   - Attempting to approve an ambiguous or `Needs Clarification` rule triggers an inline governance block instructing the user to edit the rule text and click **Resolve Ambiguity** first.
+2. **Review Compilation & Publish Modal/Screen (`Policy Compiler`)**:
+   - Clicking **Save as Draft** preserves the current session and candidate states as a draft session and syncs staged draft rules to the target policy's draft workspace without altering its active version.
+   - Clicking **Review Compilation** switches to the dedicated **Review Compilation** screen summarizing counts and tables of Approved, Rejected, Pending, and Needs Clarification rules, target policy version bump preview (`v3.2.0 → v3.3.0`), and release notes input.
+   - Once all rules are reviewed (`Pending === 0` and `Needs Clarification === 0`) and confirmed by the user, clicking **Confirm & Publish Policy Version** publishes the new policy version, records the immutable snapshot in `versionHistory`, and locks the session against duplicate publication.
+3. **Policy Version History & Draft Separation (`Policy Library`)**:
+   - The Policy Detail view features three sub-views:
+     - **Active Published Rules**: Shows the currently active version (`vX.Y.Z`) used by Content Verification.
+     - **Draft Workspace**: Shows staged draft rules from saved draft compilations or manual draft edits, kept strictly isolated from the active published rules.
+     - **Version History**: Displays a chronological timeline of all published versions (`v3.1.0`, `v3.2.0`, `v3.3.0`) with publication dates, authors, change summaries, and an **Inspect Version Snapshot** drawer/view to browse the exact rule set of any historical version.
+4. **Version-Locked Verification & Audit Trail (`Content Verification` & `Audit Trail`)**:
+   - The policy selector in **Content Verification** lists only `Active` published policies and displays the active version badge.
+   - Every new **AuditRecord** stores `policyVersion` alongside `policyRulesSnapshot: PolicyRule[]`, and the **Audit Trail** detail view allows reviewers to inspect the exact historical rule snapshot that governed that verification run.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+## 3. Technical Architecture & Data Strategy
 
-- **Decision 1: Deterministic Rule-Matching & Simulation Engine**
-  - *Chosen Approach*: Build a deterministic client/server-ready evaluation engine that analyzes input text against the selected policy's active rules (matching trigger keywords, prohibited claims, required disclaimers, and ambiguous modifiers) while also offering rich pre-populated sample drafts.
-  - *Why*: Ensures that typing custom marketing copy in Content Verification or custom guidelines in Policy Compiler produces responsive, logical four-state findings rather than static hardcoded strings, while remaining honest that AI/LLM inference is reserved for Phase 2.
-- **Decision 2: Centralized Reactive Store with `localStorage` Sync**
-  - *Chosen Approach*: A unified React Context store (`VerifactaContext`) backed by browser `localStorage` and seeded with comprehensive enterprise demo data (policies across Brand Voice, Sustainability Claims, Financial Promotions, and Healthcare Privacy).
-  - *Why*: Guarantees instantaneous cross-module reactivity (e.g., approving a rule in Compiler immediately updates Policy Library counts and Content Verification behavior) and preserves user work across refreshes, with a 1-click reset in the top bar and Settings page.
-
----
-
-## 4. Technical Architecture & Data Strategy
-
-### Architecture & Component Diagram
+### Architecture & State Flow Diagram
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│                         VerifactaStore (React Context)                        │
-│     Policies & Rules  │  Compiler Queue  │  Red-Team Suites  │  Audit Logs    │
-│                     ↕ Syncs with browser localStorage                         │
-└───────┬───────────────────────┬────────────────────┬──────────────────┬───────┘
-        │                       │                    │                  │
-┌───────▼────────┐     ┌────────▼────────┐  ┌────────▼────────┐ ┌───────▼───────┐
-│  App Shell     │     │ Policy Modules  │  │ Verification &  │ │ Governance &  │
-│  ┌───────────┐ │     │ ┌─────────────┐ │  │ Stress Testing  │ │ System Config │
-│  │ Sidebar   │ │     │ │ Policy      │ │  │ ┌─────────────┐ │ │ ┌───────────┐ │
-│  │ Nav (7x)  │ │     │ │ Library     │ │  │ │ Content     │ │ │ │ Audit     │ │
-│  ├───────────┤ │     │ │ (CRUD+View) │ │  │ │ Verifier    │ │ │ │ Trail &   │ │
-│  │ Top Bar   │ │     │ └──────┬──────┘ │  │ │ (4-State)   │ │ │ │ Sign-Off  │ │
-│  │ Search /  │ │     │        ▲        │  │ └──────┬──────┘ │ │ └───────────┘ │
-│  │ Alerts /  │ │     │ ┌──────┴──────┐ │  │        │        │ │ ┌───────────┐ │
-│  │ Profile   │ │     │ │ Policy      │ │  │ ┌──────▼──────┐ │ │ │ Settings  │ │
-│  └───────────┘ │     │ │ Compiler    │ │  │ │ Policy      │ │ │ │ & Reset   │ │
-│  ┌───────────┐ │     │ │ (Extract &  │ │  │ │ Red-Team    │ │ │ └───────────┘ │
-│  │ Overview  │ │     │ │  Promote)   │ │  │ │ Simulator   │ │ │               │
-│  │ Dashboard │ │     │ └─────────────┘ │  │ └─────────────┘ │ │               │
-│  └───────────┘ │     └─────────────────┘  └─────────────────┘ └───────────────┘
-└────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                     VerifactaContext (with Safe v1 → v1A Migration)              │
+│  CompilationSessions[]  │  Policies (Active + Draft + VersionHistory[])  │ Audits│
+└────────────┬────────────────────────────────────┬───────────────────────────┬────┘
+             │                                    │                           │
+┌────────────▼─────────────┐        ┌─────────────▼─────────────┐ ┌───────────▼────┐
+│     Policy Compiler      │        │      Policy Library       │ │ Verification & │
+│ ┌──────────────────────┐ │        │ ┌───────────────────────┐ │ │  Audit Trail   │
+│ │ 1. Session Workspace │ │        │ │ Active Published View │ │ │ ┌────────────┐ │
+│ │  • Pending           │ │        │ ├───────────────────────┤ │ │ │ Active-Only│ │
+│ │  • Needs Clarif.     │ │        │ │ Draft Rules Workspace │ │ │ │ Policy     │ │
+│ │  • Approved (Who/When│ │        │ ├───────────────────────┤ │ │ │ Selector   │ │
+│ │  • Rejected          │ │        │ │ Version History Tab   │ │ │ └─────┬──────┘ │
+│ └──────────┬───────────┘ │        │ │  • v3.3.0 (Current)   │ │ │       │        │
+│            ▼             │        │ │  • v3.2.0 (Snapshot)  │ │ │ ┌─────▼──────┐ │
+│ ┌──────────────────────┐ │Publish │ │  • v3.1.0 (Snapshot)  │ │ │ │ Immutable  │ │
+│ │ 2. Review Compilation├─┼────────┼─► Immutable Append      │ │ │ │ Audit Rule │ │
+│ │  • Save as Draft     │ │        │ └───────────────────────┘ │ │ │ Snapshot   │ │
+│ │  • Confirm & Publish │ │        │                           │ │ └────────────┘ │
+│ └──────────────────────┘ │        └───────────────────────────┘ └────────────────┘
+└──────────────────────────┘
 ```
 
-### Data Model & Core Entities
-- **`Policy`**: `id`, `name`, `category`, `version`, `lastUpdated`, `status` (`Draft` | `Active` | `Archived`), `description`, `owner`, `rules: PolicyRule[]`.
-- **`PolicyRule`**: `id`, `code` (e.g., `ENV-01`), `title`, `description`, `severity` (`Critical` | `High` | `Medium`), `evidenceRequired`, `keywords`, `isAmbiguous`.
-- **`CompiledCandidateRule`**: `id`, `sourceExcerpt`, `extractedRule`, `category`, `confidence`, `isAmbiguous`, `ambiguityNote`, `status` (`Pending` | `Approved` | `Rejected`).
-- **`VerificationFinding`**: `id`, `state` (`Supported` | `Contradicted` | `Unverified` | `Ambiguous`), `excerpt`, `ruleCode`, `ruleClause`, `explanation`, `evidenceReference`, `confidence`.
-- **`AuditRecord`**: `id` (`reviewId`), `contentTitle`, `contentRevision`, `contentSnapshot`, `policyId`, `policyName`, `policyVersion`, `reviewStatus` (`Approved` | `Flagged` | `Pending Review` | `Rejected`), `reviewer`, `timestamp`, `findings: VerificationFinding[]`, `humanDecisionNote`.
-- **`RedTeamScenario`**: `id`, `policyId`, `scenarioTitle`, `adversarialPrompt`, `targetRuleCode`, `expectedOutcome` (Four-State), `simulatedOutcome` (Four-State), `gapIdentified`, `gapSeverity`, `remediationSuggestion`.
-
-### Interactive Component & State Mapping
-- **Global Top Bar**: Global search filters the active workspace or surfaces quick-jump results across Policies and Audit Reviews; Notifications popover displays pending human reviews with click-through navigation; User Profile menu switches active reviewer persona and links to Settings.
-- **Overview Dashboard**: Interactive Recharts bar/area visualization of 4-state verification volume and policy compliance distribution; clicking "Create Policy" or "Verify Content" navigates directly to the target workflow with pre-focused inputs; clicking any Recent Flagged Content item opens its detailed Audit Trail record.
-- **Policy Library**: Search by name/category, segment filter (`All`, `Active`, `Draft`, `Archived`), modal form with validation for creating/editing policies and rules, status toggle (`Archive` / `Activate`), and a dedicated drill-down view for inspecting and managing individual policy clauses.
-- **Policy Compiler**: Supports pasting custom guidelines, uploading `.txt`/`.md` files, or loading 3 realistic sample guideline documents; simulated extraction progress indicator; inline editing of extracted clauses; toggling `Ambiguous Clause` flags; and `Approve & Promote to Policy` which appends the rule to the selected Policy Library item and increments its minor version.
-- **Content Verification**: Supports custom text entry or 4 preset marketing drafts (e.g., *Eco-Packaging Press Release*, *Q4 Enterprise Cloud SLA Claim*, *AI Productivity Guarantee*); runs deterministic analysis against the chosen policy; filters findings by state (`All`, `Supported`, `Contradicted`, `Unverified`, `Ambiguous`); and automatically creates a linked Audit Trail record.
-- **Policy Red-Team**: Filters test suites by policy, generates additional adversarial edge-case scenarios on demand, runs batch simulations comparing Expected vs. Simulated outcomes, and lets users convert an identified Policy Gap directly into a new draft rule in the Policy Library.
-- **Audit Trail & Settings**: Searchable and filterable table of all verification reviews; slide-over/detail inspection panel where reviewers can submit a human review decision (`Approve Content`, `Request Changes`, `Reject`) with audit notes; Settings view to configure simulation strictness, default reviewer profile, and full localStorage state reset.
+### Updated Data Model Entities
+- **`CandidateRuleStatus`**: `'Pending' | 'Approved' | 'Rejected' | 'Needs Clarification'`
+- **`CompiledCandidateRule`**:
+  - Preserves `sourceExcerpt`, `extractedRule`, `suggestedCode`, `category`, `severity`, `evidenceRequired`, `confidence`, `isAmbiguous`, `ambiguityNote`, `status`.
+  - Adds `sessionId: string`, `ambiguityResolved?: boolean`, `resolutionNote?: string`, `approvedBy?: string`, `approvedAt?: string`, `rejectedBy?: string`, `rejectedAt?: string`, `promotedToPolicyId?: string`, `publishedVersion?: string`.
+- **`CompilationSession`**:
+  - `id: string` (e.g., `CS-2026-0101`)
+  - `title: string`
+  - `sourceText: string`
+  - `targetPolicyId: string`
+  - `createdAt: string`
+  - `updatedAt: string`
+  - `status: 'In Review' | 'Draft Saved' | 'Published'`
+  - `publishedVersion?: string`
+  - `publishedAt?: string`
+  - `publishedBy?: string`
+  - `candidates: CompiledCandidateRule[]`
+- **`PolicyVersionSnapshot`**:
+  - `version: string`
+  - `publishedAt: string`
+  - `publishedBy: string`
+  - `changeSummary: string`
+  - `sourceSessionId?: string`
+  - `rules: PolicyRule[]` (complete immutable snapshot of all rules in that version)
+- **`Policy`**:
+  - Retains `id`, `name`, `category`, `version`, `lastUpdated`, `status`, `description`, `owner`, `rules` (currently active published rules).
+  - Adds `draftRules?: PolicyRule[]` (staged draft rules kept separate from active `rules`) and `versionHistory: PolicyVersionSnapshot[]`.
+- **`AuditRecord`**:
+  - Retains all existing fields and adds `policyRulesSnapshot: PolicyRule[]` so historical audit reviews always retain the exact clauses evaluated at the moment of verification.

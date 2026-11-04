@@ -9,13 +9,19 @@ import {
   AlertTriangle,
   FileText,
   BookOpen,
+  Lock,
 } from 'lucide-react';
 import { useVerifacta } from '../context/VerifactaContext';
 import { ReviewStatus } from '../types';
-import { ReviewStatusIndicator, FourStateIndicator } from '../components/StatusIndicators';
+import {
+  ReviewStatusIndicator,
+  FourStateIndicator,
+  SeverityText,
+} from '../components/StatusIndicators';
 
 export const AuditTrail: React.FC = () => {
   const {
+    policies,
     auditRecords,
     selectedAuditIdForDetail,
     setSelectedAuditIdForDetail,
@@ -27,6 +33,7 @@ export const AuditTrail: React.FC = () => {
 
   const [statusFilter, setStatusFilter] = useState<'All' | ReviewStatus>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [rightPanelTab, setRightPanelTab] = useState<'findings' | 'snapshot'>('findings');
 
   // Human Decision Form inside Detail View
   const [decisionNote, setDecisionNote] = useState<string>('');
@@ -41,6 +48,7 @@ export const AuditTrail: React.FC = () => {
       rec.id.toLowerCase().includes(q) ||
       rec.contentTitle.toLowerCase().includes(q) ||
       rec.policyName.toLowerCase().includes(q) ||
+      rec.policyVersion.toLowerCase().includes(q) ||
       rec.reviewer.toLowerCase().includes(q);
     return matchesStatus && matchesSearch;
   });
@@ -50,6 +58,11 @@ export const AuditTrail: React.FC = () => {
     const uniqueEvidenceRefs = Array.from(
       new Set(selectedRecord.findings.map((f) => f.evidenceReference))
     );
+
+    const currentLivePolicy = policies.find((p) => p.id === selectedRecord.policyId);
+    const isHistoricalVersion =
+      currentLivePolicy && currentLivePolicy.version !== selectedRecord.policyVersion;
+    const rulesSnapshot = selectedRecord.policyRulesSnapshot || [];
 
     const handleRecordDecision = (newStatus: ReviewStatus) => {
       const note =
@@ -77,7 +90,8 @@ export const AuditTrail: React.FC = () => {
           </button>
 
           <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span>Demonstration Audit Record</span>
+            <Lock className="w-3.5 h-3.5 text-slate-400" />
+            <span>Version-Locked Audit Snapshot</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono font-semibold text-slate-800">{selectedRecord.id}</span>
           </div>
@@ -106,7 +120,7 @@ export const AuditTrail: React.FC = () => {
               </h2>
 
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                <span>Evaluated against Policy:</span>
+                <span>Evaluated against Policy Version Snapshot:</span>
                 <button
                   onClick={() => {
                     setSelectedPolicyIdForDetail(selectedRecord.policyId);
@@ -119,6 +133,12 @@ export const AuditTrail: React.FC = () => {
                     {selectedRecord.policyName} ({selectedRecord.policyVersion})
                   </span>
                 </button>
+                {isHistoricalVersion && (
+                  <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-medium">
+                    Historical Version Preserved (Current Live Policy is{' '}
+                    {currentLivePolicy.version})
+                  </span>
+                )}
               </div>
             </div>
 
@@ -227,52 +247,112 @@ export const AuditTrail: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Column: Clause-by-Clause Findings */}
+          {/* Right Column: Clause Findings vs Immutable Policy Rule Snapshot */}
           <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Recorded Verification Findings ({selectedRecord.findings.length})
+                  Audit Verification Record ({selectedRecord.policyVersion})
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Clause-level four-state classification at time of review
+                  Publishing newer policy versions never alters historical findings or the frozen
+                  rule snapshot below.
                 </p>
               </div>
-              <span className="font-mono text-xs text-slate-500">
-                Policy {selectedRecord.policyVersion}
-              </span>
+
+              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg w-fit shrink-0">
+                <button
+                  onClick={() => setRightPanelTab('findings')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                    rightPanelTab === 'findings'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Findings ({selectedRecord.findings.length})
+                </button>
+                <button
+                  onClick={() => setRightPanelTab('snapshot')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                    rightPanelTab === 'snapshot'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Policy Rule Snapshot ({rulesSnapshot.length})
+                </button>
+              </div>
             </div>
 
-            <div className="divide-y divide-slate-200">
-              {selectedRecord.findings.map((finding) => (
-                <div key={finding.id} className="p-6 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <FourStateIndicator state={finding.state} />
-                      <span aria-hidden="true" className="text-slate-300">
-                        ·
+            {rightPanelTab === 'findings' ? (
+              <div className="divide-y divide-slate-200">
+                {selectedRecord.findings.map((finding) => (
+                  <div key={finding.id} className="p-6 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <FourStateIndicator state={finding.state} />
+                        <span aria-hidden="true" className="text-slate-300">
+                          ·
+                        </span>
+                        <span className="font-mono font-bold text-slate-800">
+                          {finding.ruleCode}
+                        </span>
+                        <span className="font-semibold text-slate-700">{finding.ruleClause}</span>
+                      </div>
+                      <span className="font-mono text-slate-500 tabular-nums">
+                        Confidence: {finding.confidence}%
                       </span>
-                      <span className="font-mono font-bold text-slate-800">{finding.ruleCode}</span>
-                      <span className="font-semibold text-slate-700">{finding.ruleClause}</span>
                     </div>
-                    <span className="font-mono text-slate-500 tabular-nums">
-                      Confidence: {finding.confidence}%
-                    </span>
-                  </div>
 
-                  <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-xs text-slate-800 italic">
-                    {finding.excerpt}
-                  </div>
+                    <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-xs text-slate-800 italic">
+                      {finding.excerpt}
+                    </div>
 
-                  <p className="text-xs text-slate-700 leading-relaxed">{finding.explanation}</p>
+                    <p className="text-xs text-slate-700 leading-relaxed">{finding.explanation}</p>
 
-                  <div className="text-xs text-slate-500 pt-1">
-                    <span className="font-semibold text-slate-700">Evidence Reference: </span>
-                    <span className="font-mono text-[11px]">{finding.evidenceReference}</span>
+                    <div className="text-xs text-slate-500 pt-1">
+                      <span className="font-semibold text-slate-700">Evidence Reference: </span>
+                      <span className="font-mono text-[11px]">{finding.evidenceReference}</span>
+                    </div>
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div>
+                <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600 flex items-center justify-between">
+                  <span>
+                    Immutable Rule Snapshot for{' '}
+                    <strong className="text-slate-900">{selectedRecord.policyName}</strong> at
+                    version{' '}
+                    <strong className="font-mono text-blue-700">
+                      {selectedRecord.policyVersion}
+                    </strong>
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-500">
+                    {rulesSnapshot.length} clauses frozen
+                  </span>
                 </div>
-              ))}
-            </div>
+                <div className="divide-y divide-slate-200">
+                  {rulesSnapshot.map((rule) => (
+                    <div key={rule.id} className="p-5 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-blue-700">{rule.code}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-semibold text-slate-900">{rule.title}</span>
+                        </div>
+                        <SeverityText severity={rule.severity} />
+                      </div>
+                      <p className="text-xs text-slate-700 leading-relaxed">{rule.description}</p>
+                      <p className="text-[11px] text-slate-500">
+                        <strong className="text-slate-700">Required Evidence:</strong>{' '}
+                        {rule.evidenceRequired}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -286,14 +366,14 @@ export const AuditTrail: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-500 mb-1">
             <History className="w-3.5 h-3.5 text-blue-600" />
-            <span>Demonstration Audit Interface · Local State Persistence</span>
+            <span>Demonstration Audit Interface · Version-Locked Rule Snapshots</span>
           </div>
           <h2 className="font-display text-xl font-bold text-slate-900">
             Compliance Review & Proof-Carrying Audit Trail
           </h2>
           <p className="text-sm text-slate-600 mt-0.5 max-w-3xl">
-            Inspect historical content verifications, policy versions, evidence references, and
-            human reviewer decisions across all marketing communications.
+            Inspect historical content verifications, exact policy version snapshots, evidence
+            references, and human reviewer decisions across all marketing communications.
           </p>
         </div>
       </div>
@@ -322,7 +402,7 @@ export const AuditTrail: React.FC = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search Review ID, content title, reviewer..."
+            placeholder="Search Review ID, content, version, reviewer..."
             className="w-full pl-9 pr-4 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
           />
         </div>
@@ -347,7 +427,7 @@ export const AuditTrail: React.FC = () => {
                   <th className="py-3 px-5">Review ID</th>
                   <th className="py-3 px-4">Content Title</th>
                   <th className="py-3 px-4">Content Revision</th>
-                  <th className="py-3 px-4">Policy Version</th>
+                  <th className="py-3 px-4">Policy Version Snapshot</th>
                   <th className="py-3 px-4">Review Status</th>
                   <th className="py-3 px-4">Reviewer</th>
                   <th className="py-3 px-4">Timestamp</th>
@@ -373,8 +453,12 @@ export const AuditTrail: React.FC = () => {
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <span className="text-slate-700 font-medium">{rec.policyName}</span>
                       <span className="text-slate-400 mx-1">·</span>
-                      <span className="font-mono text-slate-600 tabular-nums">
+                      <span className="font-mono font-semibold text-slate-800 tabular-nums">
                         {rec.policyVersion}
+                      </span>
+                      <span className="text-slate-400 mx-1">·</span>
+                      <span className="font-mono text-[11px] text-slate-500 tabular-nums">
+                        {rec.policyRulesSnapshot?.length || 0} rules
                       </span>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">

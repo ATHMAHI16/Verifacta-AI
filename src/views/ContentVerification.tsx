@@ -6,6 +6,7 @@ import {
   BookOpen,
   ArrowUpRight,
   AlertCircle,
+  Lock,
 } from 'lucide-react';
 import { useVerifacta } from '../context/VerifactaContext';
 import { SAMPLE_CONTENT_DRAFTS } from '../data/mockData';
@@ -23,12 +24,18 @@ export const ContentVerification: React.FC = () => {
     setActiveTab,
   } = useVerifacta();
 
+  // Only Active published policies can be used for Content Verification
+  const activePublishedPolicies = policies.filter((p) => p.status === 'Active');
+  const inactivePoliciesCount = policies.length - activePublishedPolicies.length;
+
   const defaultDraft = SAMPLE_CONTENT_DRAFTS[0];
 
   const [selectedDraftId, setSelectedDraftId] = useState<string>(defaultDraft.id);
   const [contentTitle, setContentTitle] = useState<string>(defaultDraft.title);
   const [contentRevision, setContentRevision] = useState<string>(defaultDraft.revision);
-  const [selectedPolicyId, setSelectedPolicyId] = useState<string>(defaultDraft.policyId);
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string>(
+    activePublishedPolicies[0]?.id || defaultDraft.policyId
+  );
   const [contentBody, setContentBody] = useState<string>(defaultDraft.content);
   const [validationError, setValidationError] = useState<string>('');
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
@@ -36,30 +43,39 @@ export const ContentVerification: React.FC = () => {
   const [findings, setFindings] = useState<VerificationFinding[]>(() =>
     defaultDraft.presetFindings.map((f, idx) => ({ ...f, id: `init-find-${idx}` }))
   );
+  const [evaluatedVersionTag, setEvaluatedVersionTag] = useState<string>(
+    activePublishedPolicies[0]?.version || 'v3.2.0'
+  );
   const [latestAuditRecord, setLatestAuditRecord] = useState<AuditRecord | null>(null);
   const [stateFilter, setStateFilter] = useState<'All' | VerificationState>('All');
 
   useEffect(() => {
     if (preselectedVerifyPolicyId) {
-      setSelectedPolicyId(preselectedVerifyPolicyId);
-      const matchingDraft = SAMPLE_CONTENT_DRAFTS.find(
-        (d) => d.policyId === preselectedVerifyPolicyId
+      const targetActive = activePublishedPolicies.find(
+        (p) => p.id === preselectedVerifyPolicyId
       );
-      if (matchingDraft) {
-        setSelectedDraftId(matchingDraft.id);
-        setContentTitle(matchingDraft.title);
-        setContentRevision(matchingDraft.revision);
-        setContentBody(matchingDraft.content);
-        setFindings(
-          matchingDraft.presetFindings.map((f, idx) => ({
-            ...f,
-            id: `preset-find-${idx}`,
-          }))
+      if (targetActive) {
+        setSelectedPolicyId(targetActive.id);
+        setEvaluatedVersionTag(targetActive.version);
+        const matchingDraft = SAMPLE_CONTENT_DRAFTS.find(
+          (d) => d.policyId === preselectedVerifyPolicyId
         );
+        if (matchingDraft) {
+          setSelectedDraftId(matchingDraft.id);
+          setContentTitle(matchingDraft.title);
+          setContentRevision(matchingDraft.revision);
+          setContentBody(matchingDraft.content);
+          setFindings(
+            matchingDraft.presetFindings.map((f, idx) => ({
+              ...f,
+              id: `preset-find-${idx}`,
+            }))
+          );
+        }
       }
       setPreselectedVerifyPolicyId(null);
     }
-  }, [preselectedVerifyPolicyId, setPreselectedVerifyPolicyId]);
+  }, [preselectedVerifyPolicyId, setPreselectedVerifyPolicyId, activePublishedPolicies]);
 
   const handleSelectDraft = (draftId: string) => {
     const draft = SAMPLE_CONTENT_DRAFTS.find((d) => d.id === draftId);
@@ -67,7 +83,13 @@ export const ContentVerification: React.FC = () => {
     setSelectedDraftId(draft.id);
     setContentTitle(draft.title);
     setContentRevision(draft.revision);
-    setSelectedPolicyId(draft.policyId);
+    const matchingActivePolicy =
+      activePublishedPolicies.find((p) => p.id === draft.policyId) ||
+      activePublishedPolicies[0];
+    if (matchingActivePolicy) {
+      setSelectedPolicyId(matchingActivePolicy.id);
+      setEvaluatedVersionTag(matchingActivePolicy.version);
+    }
     setContentBody(draft.content);
     setValidationError('');
     setFindings(
@@ -82,7 +104,7 @@ export const ContentVerification: React.FC = () => {
     e.preventDefault();
     if (!contentTitle.trim() || !contentBody.trim() || !selectedPolicyId) {
       setValidationError(
-        'Please provide a content title, select a target policy, and enter marketing content to verify.'
+        'Please provide a content title, select an active published policy, and enter marketing content to verify.'
       );
       return;
     }
@@ -96,16 +118,26 @@ export const ContentVerification: React.FC = () => {
         contentBody,
         selectedPolicyId
       );
-      setFindings(result.findings);
-      if (result.auditRecord) {
-        setLatestAuditRecord(result.auditRecord);
+      if (result.error) {
+        setValidationError(result.error);
+      } else {
+        setFindings(result.findings);
+        const chosenPol = activePublishedPolicies.find((p) => p.id === selectedPolicyId);
+        if (chosenPol) {
+          setEvaluatedVersionTag(chosenPol.version);
+        }
+        if (result.auditRecord) {
+          setLatestAuditRecord(result.auditRecord);
+        }
+        setStateFilter('All');
       }
-      setStateFilter('All');
       setIsVerifying(false);
-    }, 380);
+    }, 320);
   };
 
-  const activePolicy = policies.find((p) => p.id === selectedPolicyId) || policies[0];
+  const activePolicy =
+    activePublishedPolicies.find((p) => p.id === selectedPolicyId) ||
+    activePublishedPolicies[0];
 
   const counts = {
     Supported: findings.filter((f) => f.state === 'Supported').length,
@@ -125,15 +157,17 @@ export const ContentVerification: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Deterministic Mock Evaluation Engine · Four-State Classification</span>
+            <span>
+              Active Published Policy Enforcement · Four-State Classification
+            </span>
           </div>
           <h2 className="font-display text-xl font-bold text-slate-900">
             Evidence-Grounded Content Verification
           </h2>
           <p className="text-sm text-slate-600 mt-0.5 max-w-3xl">
-            Evaluate draft marketing copy, press releases, and sales decks against versioned
-            corporate policies. Every assertion is classified into one of four states: Supported,
-            Contradicted, Unverified, or Ambiguous.
+            Evaluate draft marketing copy against the currently active published version of a
+            corporate policy. Every verification locks an immutable snapshot of the policy version
+            and rule set into the Audit Trail.
           </p>
         </div>
 
@@ -146,7 +180,9 @@ export const ContentVerification: React.FC = () => {
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors whitespace-nowrap shrink-0"
           >
             <History className="w-3.5 h-3.5" />
-            <span>View Logged Audit ({latestAuditRecord.id})</span>
+            <span>
+              View Logged Audit ({latestAuditRecord.id} · {latestAuditRecord.policyVersion})
+            </span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         )}
@@ -224,11 +260,11 @@ export const ContentVerification: React.FC = () => {
             </div>
           </div>
 
-          {/* Target Policy Selection */}
+          {/* Active Published Policy Selection Only */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold text-slate-700">
-                Governing Policy Selection *
+                Active Published Policy *
               </label>
               {activePolicy && (
                 <button
@@ -240,7 +276,9 @@ export const ContentVerification: React.FC = () => {
                   className="text-[11px] font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
                 >
                   <BookOpen className="w-3 h-3" />
-                  <span>Inspect {activePolicy.rules.length} clauses</span>
+                  <span>
+                    Inspect {activePolicy.version} ({activePolicy.rules.length} active clauses)
+                  </span>
                 </button>
               )}
             </div>
@@ -249,12 +287,21 @@ export const ContentVerification: React.FC = () => {
               onChange={(e) => setSelectedPolicyId(e.target.value)}
               className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-blue-600"
             >
-              {policies.map((pol) => (
+              {activePublishedPolicies.map((pol) => (
                 <option key={pol.id} value={pol.id}>
-                  {pol.name} ({pol.version} · {pol.status})
+                  {pol.name} ({pol.version} · {pol.rules.length} Active Clauses)
                 </option>
               ))}
             </select>
+            {inactivePoliciesCount > 0 && (
+              <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+                <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                <span>
+                  {inactivePoliciesCount} Draft/Archived policy excluded. Only Active published
+                  versions are used for verification.
+                </span>
+              </p>
+            )}
           </div>
 
           {/* Content Body Input */}
@@ -294,8 +341,8 @@ export const ContentVerification: React.FC = () => {
             <FileSearch className="w-4 h-4" />
             <span>
               {isVerifying
-                ? 'Evaluating Against Policy Clauses...'
-                : 'Verify Content & Log Audit Record'}
+                ? 'Evaluating Against Active Published Clauses...'
+                : `Verify Content Against ${activePolicy?.version || 'Active Policy'}`}
             </span>
           </button>
         </form>
@@ -310,8 +357,12 @@ export const ContentVerification: React.FC = () => {
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Evaluated against{' '}
-                  <span className="font-medium text-slate-700">{activePolicy?.name}</span> (
-                  <span className="font-mono">{activePolicy?.version}</span>)
+                  <span className="font-medium text-slate-700">{activePolicy?.name}</span> · Active
+                  Version{' '}
+                  <span className="font-mono font-semibold text-blue-700">
+                    {activePolicy?.version || evaluatedVersionTag}
+                  </span>{' '}
+                  ({activePolicy?.rules.length} active clauses)
                 </p>
               </div>
               <span className="text-[11px] text-slate-500">

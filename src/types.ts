@@ -15,7 +15,13 @@ export type VerificationState = 'Supported' | 'Contradicted' | 'Unverified' | 'A
 
 export type ReviewStatus = 'Approved' | 'Flagged' | 'Pending Review' | 'Rejected';
 
-export type CandidateRuleStatus = 'Pending' | 'Approved' | 'Rejected';
+export type CandidateRuleStatus =
+  | 'Pending'
+  | 'Approved'
+  | 'Rejected'
+  | 'Needs Clarification';
+
+export type CompilationSessionStatus = 'In Review' | 'Draft Saved' | 'Published';
 
 export interface PolicyRule {
   id: string;
@@ -28,6 +34,18 @@ export interface PolicyRule {
   prohibitedTerms?: string[];
   ambiguousModifiers?: string[];
   isAmbiguous?: boolean;
+  sourceExcerpt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+export interface PolicyVersionSnapshot {
+  version: string;
+  publishedAt: string;
+  publishedBy: string;
+  changeSummary: string;
+  sourceSessionId?: string;
+  rules: PolicyRule[];
 }
 
 export interface Policy {
@@ -40,10 +58,13 @@ export interface Policy {
   description: string;
   owner: string;
   rules: PolicyRule[];
+  draftRules?: PolicyRule[];
+  versionHistory?: PolicyVersionSnapshot[];
 }
 
 export interface CompiledCandidateRule {
   id: string;
+  sessionId?: string;
   sourceExcerpt: string;
   extractedRule: string;
   suggestedCode: string;
@@ -53,8 +74,30 @@ export interface CompiledCandidateRule {
   confidence: number;
   isAmbiguous: boolean;
   ambiguityNote?: string;
+  ambiguityResolved?: boolean;
+  resolutionNote?: string;
   status: CandidateRuleStatus;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
   promotedToPolicyId?: string;
+  publishedVersion?: string;
+}
+
+export interface CompilationSession {
+  id: string; // e.g., CS-2026-0101
+  title: string;
+  sourceText: string;
+  targetPolicyId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: CompilationSessionStatus;
+  publishedVersion?: string;
+  publishedAt?: string;
+  publishedBy?: string;
+  releaseNotes?: string;
+  candidates: CompiledCandidateRule[];
 }
 
 export interface VerificationFinding {
@@ -76,6 +119,7 @@ export interface AuditRecord {
   policyId: string;
   policyName: string;
   policyVersion: string;
+  policyRulesSnapshot?: PolicyRule[];
   reviewStatus: ReviewStatus;
   reviewer: string;
   timestamp: string;
@@ -103,7 +147,7 @@ export interface SampleGuidelineTemplate {
   category: string;
   targetPolicyId: string;
   rawText: string;
-  extractedCandidates: Omit<CompiledCandidateRule, 'id' | 'status'>[];
+  extractedCandidates: Omit<CompiledCandidateRule, 'id' | 'status' | 'sessionId'>[];
 }
 
 export interface SampleContentDraft {

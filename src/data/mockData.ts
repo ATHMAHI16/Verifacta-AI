@@ -1,12 +1,130 @@
 import {
   Policy,
   CompiledCandidateRule,
+  CompilationSession,
   AuditRecord,
   RedTeamScenario,
   SampleGuidelineTemplate,
   SampleContentDraft,
   AppSettings,
 } from '../types';
+
+const ENV_V3_1_RULES = [
+  {
+    id: 'rule-env-1',
+    code: 'ENV-101',
+    title: 'Prohibition of Unqualified "Net-Zero" or "100% Eco-Friendly" Claims',
+    description:
+      'Marketing materials must never state that a product is "100% eco-friendly", "zero-impact", or "completely carbon neutral" without specifying the exact lifecycle boundary (cradle-to-gate vs. cradle-to-grave) and third-party verification registry ID.',
+    severity: 'Critical' as const,
+    evidenceRequired: 'ISO 14064 Lifecycle Assessment (LCA) Report ID',
+    keywords: ['carbon', 'neutral', 'net-zero', 'eco-friendly', 'emissions', 'footprint'],
+    prohibitedTerms: ['100% eco-friendly', 'zero environmental impact', 'carbon free'],
+    ambiguousModifiers: ['planet-friendly', 'greenest', 'naturally sustainable'],
+  },
+  {
+    id: 'rule-env-2',
+    code: 'ENV-102',
+    title: 'Post-Consumer Recycled (PCR) Material Percentage Disclosure',
+    description:
+      'Any claim referencing recycled packaging or materials must state the exact minimum percentage by weight of Post-Consumer Recycled (PCR) content verified by supplier chain-of-custody certificates.',
+    severity: 'High' as const,
+    evidenceRequired: 'Supplier Chain-of-Custody Audit Ref (FSC / GRS)',
+    keywords: ['recycled', 'packaging', 'pcr', 'plastic', 'cardboard', 'materials'],
+    prohibitedTerms: ['all-recycled'],
+    ambiguousModifiers: ['mostly recycled', 'made with recycled materials'],
+  },
+  {
+    id: 'rule-env-3',
+    code: 'ENV-103',
+    title: 'Carbon Offset vs. Direct Operational Reduction Separation',
+    description:
+      'Communications referencing carbon reductions must explicitly distinguish between direct Scope 1/2 operational reductions and purchased voluntary carbon offsets.',
+    severity: 'High' as const,
+    evidenceRequired: 'Annual Sustainability Accounting Ledger (GHG Protocol)',
+    keywords: ['offset', 'reduction', 'scope 1', 'scope 2', 'decarbonization', 'credits'],
+  },
+];
+
+const ENV_V3_2_RULES = [
+  ...ENV_V3_1_RULES,
+  {
+    id: 'rule-env-4',
+    code: 'ENV-104',
+    title: 'Compostability Infrastructure Qualification',
+    description:
+      'Claims that packaging is "compostable" or "biodegradable" must specify whether industrial composting facilities are required and disclose local availability limitations.',
+    severity: 'Medium' as const,
+    evidenceRequired: 'ASTM D6400 / EN 13432 Certification Document',
+    keywords: ['compostable', 'biodegradable', 'degrade', 'home compost'],
+    ambiguousModifiers: ['breaks down naturally', 'earth-degradable'],
+  },
+];
+
+const SEC_V2_3_RULES = [
+  {
+    id: 'rule-sec-1',
+    code: 'SEC-201',
+    title: 'SLA Uptime Percentage & Credit Exclusions',
+    description:
+      'Public materials may cite up to 99.99% uptime for Enterprise Tier clusters only when paired with a reference to the Master Services Agreement SLA schedule. Claims of "100% uninterrupted uptime" or "zero downtime ever" are strictly prohibited.',
+    severity: 'Critical' as const,
+    evidenceRequired: 'Production Telemetry Audit Q3-2026 & MSA Schedule B',
+    keywords: ['uptime', 'sla', 'availability', 'downtime', '99.99%', 'outage'],
+    prohibitedTerms: ['100% uptime', 'zero downtime guaranteed', 'never goes down'],
+  },
+  {
+    id: 'rule-sec-2',
+    code: 'SEC-202',
+    title: 'Encryption-at-Rest and In-Transit Specification',
+    description:
+      'Security statements must specify AES-256 for data at rest and TLS 1.3 for data in transit. Vague phrases like "military-grade unhackable encryption" are disallowed.',
+    severity: 'High' as const,
+    evidenceRequired: 'SOC 2 Type II Report Section 4.2 (Cryptography)',
+    keywords: ['encryption', 'aes-256', 'tls', 'security', 'cryptographic'],
+    prohibitedTerms: ['unhackable', 'breach-proof'],
+    ambiguousModifiers: ['military-grade security', 'bank-level protection'],
+  },
+];
+
+const SEC_V2_4_RULES = [
+  ...SEC_V2_3_RULES,
+  {
+    id: 'rule-sec-3',
+    code: 'SEC-203',
+    title: 'Zero Data Retention & Model Training Isolation',
+    description:
+      'Statements asserting customer prompts or payloads are excluded from foundation model training must cite the Enterprise Data Processing Addendum (DPA) Section 7.1.',
+    severity: 'Critical' as const,
+    evidenceRequired: 'Enterprise DPA v4.1 & Isolation Architecture Attestation',
+    keywords: ['training', 'retention', 'customer data', 'zero-retention', 'privacy'],
+  },
+];
+
+const FIN_V1_9_RULES = [
+  {
+    id: 'rule-fin-1',
+    code: 'FIN-301',
+    title: 'Cohort Sample Size & Timeframe for ROI Multipliers',
+    description:
+      'Any quantitative ROI or productivity claim (e.g., "3.4x faster workflow" or "$1.2M saved") must specify the customer cohort size (n >= 25), measurement window, and baseline methodology.',
+    severity: 'Critical' as const,
+    evidenceRequired: 'Verified Customer Benchmark Study (Forrester TEI / Internal Telemetry)',
+    keywords: ['roi', 'saved', 'faster', 'productivity', 'reduction', 'cost', 'hours'],
+    ambiguousModifiers: ['effortless ROI', 'instant payback', 'unlimited savings'],
+  },
+  {
+    id: 'rule-fin-2',
+    code: 'FIN-302',
+    title: 'Forward-Looking Financial Projection Disclaimer',
+    description:
+      'Case studies highlighting top-decile customer outcomes must include a clear disclosure that results vary based on deployment scale and baseline operational maturity.',
+    severity: 'Medium' as const,
+    evidenceRequired: 'Standard Legal Footnote FN-ROI-2026',
+    keywords: ['projection', 'guaranteed savings', 'typical results', 'payback'],
+    prohibitedTerms: ['guaranteed payback in 7 days', 'risk-free returns'],
+  },
+];
 
 export const INITIAL_POLICIES: Policy[] = [
   {
@@ -19,51 +137,26 @@ export const INITIAL_POLICIES: Policy[] = [
     owner: 'Elena Rostova · VP Brand Governance',
     description:
       'Governs all environmental, carbon-neutrality, recyclability, and lifecycle emissions claims in external marketing, packaging, and investor communications in accordance with FTC Green Guides and EU Green Claims Directive standards.',
-    rules: [
+    rules: ENV_V3_2_RULES,
+    draftRules: [],
+    versionHistory: [
       {
-        id: 'rule-env-1',
-        code: 'ENV-101',
-        title: 'Prohibition of Unqualified "Net-Zero" or "100% Eco-Friendly" Claims',
-        description:
-          'Marketing materials must never state that a product is "100% eco-friendly", "zero-impact", or "completely carbon neutral" without specifying the exact lifecycle boundary (cradle-to-gate vs. cradle-to-grave) and third-party verification registry ID.',
-        severity: 'Critical',
-        evidenceRequired: 'ISO 14064 Lifecycle Assessment (LCA) Report ID',
-        keywords: ['carbon', 'neutral', 'net-zero', 'eco-friendly', 'emissions', 'footprint'],
-        prohibitedTerms: ['100% eco-friendly', 'zero environmental impact', 'carbon free'],
-        ambiguousModifiers: ['planet-friendly', 'greenest', 'naturally sustainable'],
+        version: 'v3.2.0',
+        publishedAt: '2026-10-28 16:30 UTC',
+        publishedBy: 'Elena Rostova',
+        changeSummary:
+          'Added ENV-104 (Compostability Infrastructure Qualification) requiring ASTM D6400 / EN 13432 industrial composting facility disclosures.',
+        sourceSessionId: 'CS-2026-0098',
+        rules: ENV_V3_2_RULES,
       },
       {
-        id: 'rule-env-2',
-        code: 'ENV-102',
-        title: 'Post-Consumer Recycled (PCR) Material Percentage Disclosure',
-        description:
-          'Any claim referencing recycled packaging or materials must state the exact minimum percentage by weight of Post-Consumer Recycled (PCR) content verified by supplier chain-of-custody certificates.',
-        severity: 'High',
-        evidenceRequired: 'Supplier Chain-of-Custody Audit Ref (FSC / GRS)',
-        keywords: ['recycled', 'packaging', 'pcr', 'plastic', 'cardboard', 'materials'],
-        prohibitedTerms: ['all-recycled'],
-        ambiguousModifiers: ['mostly recycled', 'made with recycled materials'],
-      },
-      {
-        id: 'rule-env-3',
-        code: 'ENV-103',
-        title: 'Carbon Offset vs. Direct Operational Reduction Separation',
-        description:
-          'Communications referencing carbon reductions must explicitly distinguish between direct Scope 1/2 operational reductions and purchased voluntary carbon offsets.',
-        severity: 'High',
-        evidenceRequired: 'Annual Sustainability Accounting Ledger (GHG Protocol)',
-        keywords: ['offset', 'reduction', 'scope 1', 'scope 2', 'decarbonization', 'credits'],
-      },
-      {
-        id: 'rule-env-4',
-        code: 'ENV-104',
-        title: 'Compostability Infrastructure Qualification',
-        description:
-          'Claims that packaging is "compostable" or "biodegradable" must specify whether industrial composting facilities are required and disclose local availability limitations.',
-        severity: 'Medium',
-        evidenceRequired: 'ASTM D6400 / EN 13432 Certification Document',
-        keywords: ['compostable', 'biodegradable', 'degrade', 'home compost'],
-        ambiguousModifiers: ['breaks down naturally', 'earth-degradable'],
+        version: 'v3.1.0',
+        publishedAt: '2026-09-12 10:15 UTC',
+        publishedBy: 'Elena Rostova',
+        changeSummary:
+          'Baseline FY2026 ESG policy release establishing ENV-101 through ENV-103 lifecycle and PCR substantiation rules.',
+        sourceSessionId: 'CS-2026-0081',
+        rules: ENV_V3_1_RULES,
       },
     ],
   },
@@ -77,39 +170,26 @@ export const INITIAL_POLICIES: Policy[] = [
     owner: 'Marcus Vance · Chief Information Security Counsel',
     description:
       'Establishes mandatory verification criteria for uptime guarantees, encryption standards, zero-data-retention assurances, and regulatory compliance certifications in B2B sales collateral.',
-    rules: [
+    rules: SEC_V2_4_RULES,
+    draftRules: [],
+    versionHistory: [
       {
-        id: 'rule-sec-1',
-        code: 'SEC-201',
-        title: 'SLA Uptime Percentage & Credit Exclusions',
-        description:
-          'Public materials may cite up to 99.99% uptime for Enterprise Tier clusters only when paired with a reference to the Master Services Agreement SLA schedule. Claims of "100% uninterrupted uptime" or "zero downtime ever" are strictly prohibited.',
-        severity: 'Critical',
-        evidenceRequired: 'Production Telemetry Audit Q3-2026 & MSA Schedule B',
-        keywords: ['uptime', 'sla', 'availability', 'downtime', '99.99%', 'outage'],
-        prohibitedTerms: ['100% uptime', 'zero downtime guaranteed', 'never goes down'],
+        version: 'v2.4.0',
+        publishedAt: '2026-10-31 14:10 UTC',
+        publishedBy: 'Marcus Vance',
+        changeSummary:
+          'Published SEC-203 enforcing Enterprise DPA v4.1 Section 7.1 citations for foundation model zero-retention claims.',
+        sourceSessionId: 'CS-2026-0099',
+        rules: SEC_V2_4_RULES,
       },
       {
-        id: 'rule-sec-2',
-        code: 'SEC-202',
-        title: 'Encryption-at-Rest and In-Transit Specification',
-        description:
-          'Security statements must specify AES-256 for data at rest and TLS 1.3 for data in transit. Vague phrases like "military-grade unhackable encryption" are disallowed.',
-        severity: 'High',
-        evidenceRequired: 'SOC 2 Type II Report Section 4.2 (Cryptography)',
-        keywords: ['encryption', 'aes-256', 'tls', 'security', 'cryptographic'],
-        prohibitedTerms: ['unhackable', 'breach-proof'],
-        ambiguousModifiers: ['military-grade security', 'bank-level protection'],
-      },
-      {
-        id: 'rule-sec-3',
-        code: 'SEC-203',
-        title: 'Zero Data Retention & Model Training Isolation',
-        description:
-          'Statements asserting customer prompts or payloads are excluded from foundation model training must cite the Enterprise Data Processing Addendum (DPA) Section 7.1.',
-        severity: 'Critical',
-        evidenceRequired: 'Enterprise DPA v4.1 & Isolation Architecture Attestation',
-        keywords: ['training', 'retention', 'customer data', 'zero-retention', 'privacy'],
+        version: 'v2.3.0',
+        publishedAt: '2026-08-20 09:00 UTC',
+        publishedBy: 'Marcus Vance',
+        changeSummary:
+          'Initial Enterprise Cloud Security SLA and cryptographic specification baseline (SEC-201, SEC-202).',
+        sourceSessionId: 'CS-2026-0074',
+        rules: SEC_V2_3_RULES,
       },
     ],
   },
@@ -123,28 +203,17 @@ export const INITIAL_POLICIES: Policy[] = [
     owner: 'Claire Sterling · Director of Legal Compliance',
     description:
       'Regulates productivity multiplier claims, customer cost-savings metrics, payback period projections, and benchmark comparisons in case studies and launch campaigns.',
-    rules: [
+    rules: FIN_V1_9_RULES,
+    draftRules: [],
+    versionHistory: [
       {
-        id: 'rule-fin-1',
-        code: 'FIN-301',
-        title: 'Cohort Sample Size & Timeframe for ROI Multipliers',
-        description:
-          'Any quantitative ROI or productivity claim (e.g., "3.4x faster workflow" or "$1.2M saved") must specify the customer cohort size (n >= 25), measurement window, and baseline methodology.',
-        severity: 'Critical',
-        evidenceRequired: 'Verified Customer Benchmark Study (Forrester TEI / Internal Telemetry)',
-        keywords: ['roi', 'saved', 'faster', 'productivity', 'reduction', 'cost', 'hours'],
-        ambiguousModifiers: ['effortless ROI', 'instant payback', 'unlimited savings'],
-      },
-      {
-        id: 'rule-fin-2',
-        code: 'FIN-302',
-        title: 'Forward-Looking Financial Projection Disclaimer',
-        description:
-          'Case studies highlighting top-decile customer outcomes must include a clear disclosure that results vary based on deployment scale and baseline operational maturity.',
-        severity: 'Medium',
-        evidenceRequired: 'Standard Legal Footnote FN-ROI-2026',
-        keywords: ['projection', 'guaranteed savings', 'typical results', 'payback'],
-        prohibitedTerms: ['guaranteed payback in 7 days', 'risk-free returns'],
+        version: 'v1.9.0',
+        publishedAt: '2026-10-19 11:45 UTC',
+        publishedBy: 'Claire Sterling',
+        changeSummary:
+          'Established minimum n >= 25 enterprise cohort requirement (FIN-301) and forward-looking variance disclaimer (FIN-302).',
+        sourceSessionId: 'CS-2026-0092',
+        rules: FIN_V1_9_RULES,
       },
     ],
   },
@@ -158,7 +227,8 @@ export const INITIAL_POLICIES: Policy[] = [
     owner: 'Dr. Aris Thorne · Medical Affairs Compliance',
     description:
       'Draft governance framework for healthcare workflow software communications, ensuring HIPAA compliance representations and distinguishing administrative decision support from clinical diagnostics.',
-    rules: [
+    rules: [],
+    draftRules: [
       {
         id: 'rule-med-1',
         code: 'MED-401',
@@ -181,6 +251,7 @@ export const INITIAL_POLICIES: Policy[] = [
         keywords: ['hipaa', 'phi', 'baa', 'protected health information'],
       },
     ],
+    versionHistory: [],
   },
   {
     id: 'pol-brd-005',
@@ -204,69 +275,27 @@ export const INITIAL_POLICIES: Policy[] = [
         keywords: ['competitor', 'versus', 'compared to', 'market leader'],
       },
     ],
-  },
-];
-
-export const INITIAL_CANDIDATE_RULES: CompiledCandidateRule[] = [
-  {
-    id: 'cand-101',
-    sourceExcerpt:
-      '"All packaging claims referencing ocean-bound or post-consumer recycled resins must state the exact weight percentage certified by Global Recycled Standard (GRS 4.0) audits."',
-    extractedRule:
-      'Require explicit weight-percentage disclosure and GRS 4.0 certification reference for all ocean-bound or post-consumer recycled resin claims.',
-    suggestedCode: 'ENV-105',
-    category: 'ESG & Sustainability',
-    severity: 'High',
-    evidenceRequired: 'GRS 4.0 Scope Certificate ID',
-    confidence: 96,
-    isAmbiguous: false,
-    status: 'Pending',
-  },
-  {
-    id: 'cand-102',
-    sourceExcerpt:
-      '"Marketing copy should strive to use forward-thinking, eco-conscious language without sounding overly technical or making unreasonable promises about future renewable transitions."',
-    extractedRule:
-      'Ensure sustainability messaging uses accessible language while avoiding unsubstantiated commitments regarding future renewable energy transitions.',
-    suggestedCode: 'ENV-106',
-    category: 'ESG & Sustainability',
-    severity: 'Medium',
-    evidenceRequired: 'Renewable Energy Procurement Roadmap (RE100)',
-    confidence: 68,
-    isAmbiguous: true,
-    ambiguityNote:
-      'Contains subjective qualifiers ("overly technical", "unreasonable promises") that cannot be deterministically verified without numerical thresholds.',
-    status: 'Pending',
-  },
-  {
-    id: 'cand-103',
-    sourceExcerpt:
-      '"Zero-downtime migration claims are strictly forbidden unless qualified as near-zero downtime (< 30 seconds connection drain) backed by multi-region failover logs."',
-    extractedRule:
-      'Prohibit unqualified "zero-downtime migration" claims; require explicit "< 30s connection drain" qualification and multi-region failover log reference.',
-    suggestedCode: 'SEC-204',
-    category: 'Technical & Product Claims',
-    severity: 'Critical',
-    evidenceRequired: 'Multi-Region Failover Benchmark Report',
-    confidence: 94,
-    isAmbiguous: false,
-    status: 'Pending',
-  },
-  {
-    id: 'cand-104',
-    sourceExcerpt:
-      '"Customer ROI testimonials featuring enterprise cost reductions must reflect typical deployment outcomes and avoid cherry-picking outlier performance."',
-    extractedRule:
-      'Restrict enterprise cost-reduction testimonials to median or interquartile cohort outcomes; prohibit single-tenant outlier claims without cohort context.',
-    suggestedCode: 'FIN-303',
-    category: 'Financial & ROI Marketing',
-    severity: 'High',
-    evidenceRequired: 'Customer Cohort Distribution Summary (Median & IQR)',
-    confidence: 74,
-    isAmbiguous: true,
-    ambiguityNote:
-      'Source phrase "typical deployment outcomes" requires definition (e.g., median vs. mean across n >= 25 active enterprise accounts).',
-    status: 'Pending',
+    draftRules: [],
+    versionHistory: [
+      {
+        version: 'v1.0.4',
+        publishedAt: '2025-08-14 15:00 UTC',
+        publishedBy: 'Elena Rostova',
+        changeSummary: 'Final archived release prior to 2026 policy consolidation.',
+        rules: [
+          {
+            id: 'rule-brd-1',
+            code: 'BRD-501',
+            title: 'Named Competitor Feature Matrix Verification',
+            description:
+              'Any side-by-side comparison naming a direct competitor must cite public documentation dated within the last 90 days.',
+            severity: 'Medium',
+            evidenceRequired: 'Competitive Intelligence Archive Snapshot',
+            keywords: ['competitor', 'versus', 'compared to', 'market leader'],
+          },
+        ],
+      },
+    ],
   },
 ];
 
@@ -311,7 +340,7 @@ Any statement claiming "water-positive manufacturing" is prohibited unless accom
         confidence: 69,
         isAmbiguous: true,
         ambiguityNote:
-          'Subjective terms ("overly technical", "unreasonable promises") require concrete lexical boundaries for automated enforcement.',
+          'Subjective terms ("overly technical", "unreasonable promises") require concrete lexical boundaries before this rule can be approved.',
       },
       {
         sourceExcerpt:
@@ -379,7 +408,7 @@ Copywriters should highlight our strong security posture using reassuring enterp
         confidence: 71,
         isAmbiguous: true,
         ambiguityNote:
-          'Phrase "reassuring enterprise terminology" is non-deterministic and should be replaced with an explicit list of approved security ciphers.',
+          'Phrase "reassuring enterprise terminology" is non-deterministic and must be replaced with an explicit list of approved security ciphers before approval.',
       },
     ],
   },
@@ -420,7 +449,104 @@ Customer ROI testimonials featuring enterprise cost reductions must reflect typi
         confidence: 73,
         isAmbiguous: true,
         ambiguityNote:
-          '"Typical deployment outcomes" is open to interpretation unless anchored to median or 25th-75th percentile cohort metrics.',
+          '"Typical deployment outcomes" is open to interpretation until anchored to median or 25th-75th percentile cohort metrics.',
+      },
+    ],
+  },
+];
+
+export const INITIAL_CANDIDATE_RULES: CompiledCandidateRule[] = [
+  {
+    id: 'cand-101',
+    sessionId: 'CS-2026-0101',
+    sourceExcerpt:
+      '"All marketing claims referencing ocean-bound plastics or post-consumer recycled (PCR) resins must state the exact weight percentage certified by Global Recycled Standard (GRS 4.0) audits."',
+    extractedRule:
+      'Mandate exact weight-percentage disclosure and GRS 4.0 audit citation for all ocean-bound plastic or PCR resin claims.',
+    suggestedCode: 'ENV-105',
+    category: 'ESG & Sustainability',
+    severity: 'High',
+    evidenceRequired: 'GRS 4.0 Audit Certificate Ref',
+    confidence: 96,
+    isAmbiguous: false,
+    status: 'Pending',
+  },
+  {
+    id: 'cand-102',
+    sessionId: 'CS-2026-0101',
+    sourceExcerpt:
+      '"Marketing copy should strive to use forward-thinking, eco-conscious language without sounding overly technical or making unreasonable promises about future renewable transitions."',
+    extractedRule:
+      'Require renewable energy transition messaging to cite verified REC registry numbers and avoid unquantified future transition pledges.',
+    suggestedCode: 'ENV-106',
+    category: 'ESG & Sustainability',
+    severity: 'Medium',
+    evidenceRequired: '2025 REC Registry #8841-EU Attestation',
+    confidence: 69,
+    isAmbiguous: true,
+    ambiguityNote:
+      'Subjective terms ("overly technical", "unreasonable promises") require concrete lexical boundaries before this rule can be approved.',
+    status: 'Needs Clarification',
+  },
+  {
+    id: 'cand-103',
+    sessionId: 'CS-2026-0101',
+    sourceExcerpt:
+      '"Any statement claiming water-positive manufacturing is prohibited unless accompanied by an independent watershed restoration audit verifying net-positive basin replenishment in the exact operating region."',
+    extractedRule:
+      'Prohibit "water-positive manufacturing" claims without a region-specific independent watershed restoration audit citation.',
+    suggestedCode: 'ENV-107',
+    category: 'ESG & Sustainability',
+    severity: 'Critical',
+    evidenceRequired: 'AWS (Alliance for Water Stewardship) Basin Audit Report',
+    confidence: 95,
+    isAmbiguous: false,
+    status: 'Pending',
+  },
+];
+
+export const INITIAL_COMPILATION_SESSIONS: CompilationSession[] = [
+  {
+    id: 'CS-2026-0101',
+    title: '2026 Global Packaging & Net-Zero Communications Directive',
+    sourceText: SAMPLE_GUIDELINE_TEMPLATES[0].rawText,
+    targetPolicyId: 'pol-env-001',
+    createdAt: '2026-11-03 15:10 UTC',
+    updatedAt: '2026-11-03 15:10 UTC',
+    status: 'In Review',
+    candidates: INITIAL_CANDIDATE_RULES,
+  },
+  {
+    id: 'CS-2026-0099',
+    title: 'Q3 Enterprise DPA Zero-Retention Clause Extraction',
+    sourceText: SAMPLE_GUIDELINE_TEMPLATES[1].rawText,
+    targetPolicyId: 'pol-sec-002',
+    createdAt: '2026-10-31 13:45 UTC',
+    updatedAt: '2026-10-31 14:10 UTC',
+    status: 'Published',
+    publishedVersion: 'v2.4.0',
+    publishedAt: '2026-10-31 14:10 UTC',
+    publishedBy: 'Marcus Vance',
+    releaseNotes: 'Published SEC-203 model training isolation clause into Enterprise Cloud Security Policy.',
+    candidates: [
+      {
+        id: 'cand-hist-99-1',
+        sessionId: 'CS-2026-0099',
+        sourceExcerpt:
+          '"All enterprise sales decks stating that customer prompts are isolated from foundation model training must reference Enterprise DPA Section 7.1 and link to the current Sub-Processor Trust Registry."',
+        extractedRule:
+          'Statements asserting customer prompts or payloads are excluded from foundation model training must cite the Enterprise Data Processing Addendum (DPA) Section 7.1.',
+        suggestedCode: 'SEC-203',
+        category: 'Technical & Product Claims',
+        severity: 'Critical',
+        evidenceRequired: 'Enterprise DPA v4.1 & Isolation Architecture Attestation',
+        confidence: 97,
+        isAmbiguous: false,
+        status: 'Approved',
+        approvedBy: 'Marcus Vance',
+        approvedAt: '2026-10-31 14:05 UTC',
+        promotedToPolicyId: 'pol-sec-002',
+        publishedVersion: 'v2.4.0',
       },
     ],
   },
@@ -645,6 +771,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     policyId: 'pol-env-001',
     policyName: 'Environmental & Sustainability Claims Policy',
     policyVersion: 'v3.2.0',
+    policyRulesSnapshot: ENV_V3_2_RULES,
     reviewStatus: 'Flagged',
     reviewer: 'Elena Rostova',
     timestamp: '2026-11-03 14:22 UTC',
@@ -663,6 +790,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     policyId: 'pol-sec-002',
     policyName: 'Enterprise Cloud Security & SLA Representations',
     policyVersion: 'v2.4.0',
+    policyRulesSnapshot: SEC_V2_4_RULES,
     reviewStatus: 'Pending Review',
     reviewer: 'Unassigned (Queue)',
     timestamp: '2026-11-03 11:05 UTC',
@@ -678,10 +806,11 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     contentSnapshot: `In FY2026, our European fulfillment centers achieved a 38% reduction in direct Scope 1 and Scope 2 emissions compared to our 2022 baseline, verified under ISO 14064 Report #LCA-2026-EU4. All corrugated transit boxes contain a minimum of 90% Post-Consumer Recycled (PCR) fiber certified under FSC Chain-of-Custody #FSC-C148291.`,
     policyId: 'pol-env-001',
     policyName: 'Environmental & Sustainability Claims Policy',
-    policyVersion: 'v3.2.0',
+    policyVersion: 'v3.1.0',
+    policyRulesSnapshot: ENV_V3_1_RULES,
     reviewStatus: 'Approved',
     reviewer: 'Marcus Vance',
-    timestamp: '2026-11-02 17:40 UTC',
+    timestamp: '2026-10-15 17:40 UTC',
     findings: [
       {
         id: 'find-init-847-1',
@@ -709,7 +838,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
       },
     ],
     humanDecisionNote:
-      'All environmental assertions are properly bounded and backed by audited FY2026 certificates. Approved for external publication.',
+      'Evaluated under v3.1.0 prior to ENV-104 addition. All environmental assertions are properly bounded and backed by audited FY2026 certificates.',
   },
   {
     id: 'REV-2026-0846',
@@ -719,6 +848,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     policyId: 'pol-fin-003',
     policyName: 'Financial Performance & ROI Substantiation Standard',
     policyVersion: 'v1.9.0',
+    policyRulesSnapshot: FIN_V1_9_RULES,
     reviewStatus: 'Rejected',
     reviewer: 'Claire Sterling',
     timestamp: '2026-11-01 16:15 UTC',
@@ -736,10 +866,11 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     contentSnapshot: `Customer data is encrypted at rest using AES-256 and in transit via TLS 1.3 (SOC 2 Type II Section 4.2). Enterprise tier workloads operate under a 99.99% availability SLA (MSA Schedule B), and customer payloads are strictly excluded from foundation model training under Enterprise DPA v4.1 Section 7.1.`,
     policyId: 'pol-sec-002',
     policyName: 'Enterprise Cloud Security & SLA Representations',
-    policyVersion: 'v2.4.0',
+    policyVersion: 'v2.3.0',
+    policyRulesSnapshot: SEC_V2_3_RULES,
     reviewStatus: 'Approved',
     reviewer: 'Marcus Vance',
-    timestamp: '2026-10-30 09:50 UTC',
+    timestamp: '2026-09-30 09:50 UTC',
     findings: [
       {
         id: 'find-init-845-1',
@@ -764,7 +895,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
         confidence: 98,
       },
     ],
-    humanDecisionNote: 'Verified against Q3 SOC 2 attestation and current MSA schedule. Approved.',
+    humanDecisionNote: 'Verified against v2.3.0 SOC 2 attestation and MSA schedule. Approved.',
   },
 ];
 

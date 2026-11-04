@@ -8,9 +8,12 @@ import {
   RotateCcw,
   ArrowLeft,
   FileSearch,
-  ShieldAlert,
+  ShieldCheck,
+  History,
+  FileEdit,
   X,
   Check,
+  Clock,
 } from 'lucide-react';
 import { useVerifacta } from '../context/VerifactaContext';
 import { Policy, PolicyStatus, RuleSeverity } from '../types';
@@ -27,12 +30,17 @@ export const PolicyLibrary: React.FC = () => {
     updatePolicy,
     toggleArchivePolicy,
     addRuleToPolicy,
+    publishPolicyDraftRules,
     setPreselectedVerifyPolicyId,
     setActiveTab,
   } = useVerifacta();
 
   const [statusFilter, setStatusFilter] = useState<'All' | PolicyStatus>('All');
   const [localSearch, setLocalSearch] = useState('');
+
+  // Detail View Sub-Tabs: 'active' | 'draft' | 'history'
+  const [detailSubTab, setDetailSubTab] = useState<'active' | 'draft' | 'history'>('active');
+  const [inspectedVersion, setInspectedVersion] = useState<string | null>(null);
 
   // Create / Edit Policy Modal State
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
@@ -53,6 +61,7 @@ export const PolicyLibrary: React.FC = () => {
   const [ruleSeverity, setRuleSeverity] = useState<RuleSeverity>('High');
   const [ruleEvidence, setRuleEvidence] = useState('');
   const [ruleKeywords, setRuleKeywords] = useState('');
+  const [ruleAddTarget, setRuleAddTarget] = useState<'draft' | 'publish'>('draft');
   const [ruleFormError, setRuleFormError] = useState('');
 
   useEffect(() => {
@@ -61,6 +70,17 @@ export const PolicyLibrary: React.FC = () => {
       setOpenCreatePolicyModalOnMount(false);
     }
   }, [openCreatePolicyModalOnMount, setOpenCreatePolicyModalOnMount]);
+
+  const selectedPolicy = policies.find((p) => p.id === selectedPolicyIdForDetail) || null;
+
+  useEffect(() => {
+    if (selectedPolicy) {
+      setDetailSubTab(
+        selectedPolicy.status === 'Draft' && selectedPolicy.rules.length === 0 ? 'draft' : 'active'
+      );
+      setInspectedVersion(selectedPolicy.version);
+    }
+  }, [selectedPolicyIdForDetail]);
 
   const handleOpenCreateModal = () => {
     setEditingPolicy(null);
@@ -136,17 +156,22 @@ export const PolicyLibrary: React.FC = () => {
       return;
     }
 
-    addRuleToPolicy(policyId, {
-      code: ruleCode.trim().toUpperCase(),
-      title: ruleTitle.trim(),
-      description: ruleDesc.trim(),
-      severity: ruleSeverity,
-      evidenceRequired: ruleEvidence.trim(),
-      keywords: ruleKeywords
-        .split(',')
-        .map((k) => k.trim())
-        .filter(Boolean),
-    });
+    const asDraft = ruleAddTarget === 'draft';
+    addRuleToPolicy(
+      policyId,
+      {
+        code: ruleCode.trim().toUpperCase(),
+        title: ruleTitle.trim(),
+        description: ruleDesc.trim(),
+        severity: ruleSeverity,
+        evidenceRequired: ruleEvidence.trim(),
+        keywords: ruleKeywords
+          .split(',')
+          .map((k) => k.trim())
+          .filter(Boolean),
+      },
+      asDraft
+    );
 
     setAddRuleModalOpen(false);
     setRuleCode('');
@@ -155,9 +180,8 @@ export const PolicyLibrary: React.FC = () => {
     setRuleEvidence('');
     setRuleKeywords('');
     setRuleFormError('');
+    setDetailSubTab(asDraft ? 'draft' : 'active');
   };
-
-  const selectedPolicy = policies.find((p) => p.id === selectedPolicyIdForDetail) || null;
 
   const filteredPolicies = policies.filter((pol) => {
     const matchesStatus = statusFilter === 'All' || pol.status === statusFilter;
@@ -175,6 +199,11 @@ export const PolicyLibrary: React.FC = () => {
 
   // Detail View if a policy is selected
   if (selectedPolicy) {
+    const versionHistory = selectedPolicy.versionHistory || [];
+    const draftRules = selectedPolicy.draftRules || [];
+    const inspectedSnapshot =
+      versionHistory.find((vh) => vh.version === inspectedVersion) || versionHistory[0] || null;
+
     return (
       <div className="space-y-6">
         {/* Top Breadcrumb & Actions */}
@@ -211,16 +240,18 @@ export const PolicyLibrary: React.FC = () => {
                 </>
               )}
             </button>
-            <button
-              onClick={() => {
-                setPreselectedVerifyPolicyId(selectedPolicy.id);
-                setActiveTab('content-verification');
-              }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
-            >
-              <FileSearch className="w-3.5 h-3.5" />
-              <span>Verify Content Against Policy</span>
-            </button>
+            {selectedPolicy.status === 'Active' && (
+              <button
+                onClick={() => {
+                  setPreselectedVerifyPolicyId(selectedPolicy.id);
+                  setActiveTab('content-verification');
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              >
+                <FileSearch className="w-3.5 h-3.5" />
+                <span>Verify Content Against Active ({selectedPolicy.version})</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -231,8 +262,12 @@ export const PolicyLibrary: React.FC = () => {
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mb-1.5">
                 <span>{selectedPolicy.category}</span>
                 <span aria-hidden="true">·</span>
-                <span className="font-mono font-semibold text-slate-700 tabular-nums">
-                  {selectedPolicy.version}
+                <span className="font-mono font-semibold text-slate-800 tabular-nums">
+                  Active Version: {selectedPolicy.version}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">
+                  {versionHistory.length} published version(s)
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>Updated {selectedPolicy.lastUpdated}</span>
@@ -250,75 +285,353 @@ export const PolicyLibrary: React.FC = () => {
               <PolicyStatusIndicator status={selectedPolicy.status} />
             </div>
           </div>
-        </div>
 
-        {/* Policy Rules List */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <h3 className="font-display text-base font-bold text-slate-900">
-                Enforceable Policy Clauses ({selectedPolicy.rules.length})
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Structured verification clauses evaluated during Content Verification and Red-Team
-                testing
-              </p>
+          {/* Sub-Navigation Tabs: Active Published Rules | Draft Workspace | Version History */}
+          <div className="mt-6 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-lg w-fit">
+              <button
+                onClick={() => setDetailSubTab('active')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                  detailSubTab === 'active'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>
+                  Active Published Rules ({selectedPolicy.rules.length})
+                </span>
+              </button>
+
+              <button
+                onClick={() => setDetailSubTab('draft')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                  detailSubTab === 'draft'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <FileEdit className="w-3.5 h-3.5 text-amber-600" />
+                <span>Staged Draft Rules ({draftRules.length})</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setDetailSubTab('history');
+                  if (!inspectedVersion && versionHistory.length > 0) {
+                    setInspectedVersion(versionHistory[0].version);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                  detailSubTab === 'history'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <History className="w-3.5 h-3.5 text-blue-600" />
+                <span>Version History ({versionHistory.length})</span>
+              </button>
             </div>
+
             <button
               onClick={() => {
-                setRuleCode(`RULE-${selectedPolicy.rules.length + 101}`);
+                setRuleCode(
+                  `RULE-${selectedPolicy.rules.length + draftRules.length + 101}`
+                );
+                setRuleAddTarget('draft');
                 setAddRuleModalOpen(true);
               }}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap w-fit"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Add Policy Rule</span>
+              <span>Add Policy Clause</span>
             </button>
           </div>
-
-          <div className="divide-y divide-slate-200">
-            {selectedPolicy.rules.map((rule) => (
-              <div key={rule.id} className="p-6 hover:bg-slate-50/60 transition-colors">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className="font-mono text-xs font-bold text-blue-700 tabular-nums">
-                      {rule.code}
-                    </span>
-                    <span className="text-slate-300" aria-hidden="true">
-                      ·
-                    </span>
-                    <h4 className="font-display text-sm font-bold text-slate-900">{rule.title}</h4>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {rule.isAmbiguous && (
-                      <span className="text-xs font-medium text-violet-700">
-                        Flagged Ambiguous Wording
-                      </span>
-                    )}
-                    <SeverityText severity={rule.severity} />
-                  </div>
-                </div>
-
-                <p className="text-sm text-slate-700 leading-relaxed max-w-4xl">
-                  {rule.description}
-                </p>
-
-                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
-                  <div>
-                    <span className="font-medium text-slate-700">Required Evidence: </span>
-                    <span>{rule.evidenceRequired}</span>
-                  </div>
-                  {rule.keywords.length > 0 && (
-                    <div>
-                      <span className="font-medium text-slate-700">Monitored Lexicon: </span>
-                      <span className="font-mono text-[11px]">{rule.keywords.join(', ')}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
+
+        {/* SUB-TAB 1: ACTIVE PUBLISHED RULES */}
+        {detailSubTab === 'active' && (
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Active Published Rule Set — {selectedPolicy.version} (
+                  {selectedPolicy.rules.length} Clauses)
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This is the authoritative published rule set evaluated during Content Verification.
+                  Draft changes are kept isolated until explicitly published.
+                </p>
+              </div>
+            </div>
+
+            {selectedPolicy.rules.length === 0 ? (
+              <div className="p-10 text-center space-y-2">
+                <p className="text-sm font-semibold text-slate-900">
+                  No active published version yet
+                </p>
+                <p className="text-xs text-slate-500">
+                  This policy is currently in Draft status ({draftRules.length} staged draft rules).
+                  Switch to the &ldquo;Staged Draft Rules&rdquo; tab to review and publish {selectedPolicy.version}.
+                </p>
+                <button
+                  onClick={() => setDetailSubTab('draft')}
+                  className="mt-2 px-4 py-2 text-xs font-semibold text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+                >
+                  Open Staged Draft Rules ({draftRules.length})
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200">
+                {selectedPolicy.rules.map((rule) => (
+                  <div key={rule.id} className="p-6 hover:bg-slate-50/60 transition-colors">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-mono text-xs font-bold text-blue-700 tabular-nums">
+                          {rule.code}
+                        </span>
+                        <span className="text-slate-300" aria-hidden="true">
+                          ·
+                        </span>
+                        <h4 className="font-display text-sm font-bold text-slate-900">
+                          {rule.title}
+                        </h4>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <SeverityText severity={rule.severity} />
+                      </div>
+                    </div>
+
+                    <p className="text-sm text-slate-700 leading-relaxed max-w-4xl">
+                      {rule.description}
+                    </p>
+
+                    {rule.sourceExcerpt && (
+                      <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200/80 rounded text-xs text-slate-600 italic">
+                        Compiled from Source Excerpt: {rule.sourceExcerpt}
+                      </div>
+                    )}
+
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
+                      <div>
+                        <span className="font-medium text-slate-700">Required Evidence: </span>
+                        <span>{rule.evidenceRequired}</span>
+                      </div>
+                      {rule.keywords.length > 0 && (
+                        <div>
+                          <span className="font-medium text-slate-700">Monitored Lexicon: </span>
+                          <span className="font-mono text-[11px]">{rule.keywords.join(', ')}</span>
+                        </div>
+                      )}
+                      {rule.approvedBy && (
+                        <div>
+                          <span className="font-medium text-slate-700">Approved By: </span>
+                          <span>
+                            {rule.approvedBy} ({rule.approvedAt})
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SUB-TAB 2: STAGED DRAFT RULES (ISOLATED FROM ACTIVE VERSION) */}
+        {detailSubTab === 'draft' && (
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Staged Draft Workspace ({draftRules.length} Unreleased Clauses)
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Draft rules saved from incomplete Policy Compiler sessions or manual additions are
+                  staged here without modifying the active published version ({selectedPolicy.version}).
+                </p>
+              </div>
+
+              {draftRules.length > 0 && (
+                <button
+                  onClick={() => {
+                    publishPolicyDraftRules(selectedPolicy.id);
+                    setDetailSubTab('active');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs whitespace-nowrap"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Publish Staged Drafts as New Version</span>
+                </button>
+              )}
+            </div>
+
+            {draftRules.length === 0 ? (
+              <div className="p-10 text-center space-y-2">
+                <p className="text-sm font-semibold text-slate-900">
+                  No staged draft clauses pending publication
+                </p>
+                <p className="text-xs text-slate-500 max-w-lg mx-auto">
+                  When you click &ldquo;Save as Draft&rdquo; in the Policy Compiler or add a draft clause
+                  manually, those clauses are held here until you publish a new policy version.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200">
+                {draftRules.map((dRule) => (
+                  <div key={dRule.id} className="p-6 space-y-2 bg-amber-50/20">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-amber-800">{dRule.code}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-semibold text-slate-900">{dRule.title}</span>
+                      </div>
+                      <SeverityText severity={dRule.severity} />
+                    </div>
+                    <p className="text-sm text-slate-700 leading-relaxed">{dRule.description}</p>
+                    <p className="text-xs text-slate-500">
+                      <strong className="text-slate-700">Evidence Required:</strong>{' '}
+                      {dRule.evidenceRequired}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SUB-TAB 3: VERSION HISTORY & HISTORICAL SNAPSHOT INSPECTOR */}
+        {detailSubTab === 'history' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Column: Published Version Timeline */}
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200">
+                <h3 className="font-display text-base font-bold text-slate-900">
+                  Immutable Version History ({versionHistory.length})
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select any historical release to inspect its complete frozen rule set
+                </p>
+              </div>
+
+              {versionHistory.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500">
+                  No versions have been published for this draft policy yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {versionHistory.map((vh, idx) => {
+                    const isSelected =
+                      (inspectedSnapshot && inspectedSnapshot.version === vh.version) ||
+                      (!inspectedSnapshot && idx === 0);
+                    const isCurrentActive =
+                      vh.version === selectedPolicy.version &&
+                      selectedPolicy.status === 'Active';
+
+                    return (
+                      <button
+                        key={vh.version}
+                        onClick={() => setInspectedVersion(vh.version)}
+                        className={`w-full p-5 text-left transition-colors flex flex-col gap-1.5 ${
+                          isSelected ? 'bg-blue-50/70' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-bold text-slate-900 tabular-nums">
+                              {vh.version}
+                            </span>
+                            {isCurrentActive && (
+                              <span className="text-[11px] font-semibold text-emerald-700">
+                                · Current Active
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-mono text-xs text-slate-500 tabular-nums">
+                            {vh.rules.length} rules
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                          {vh.changeSummary}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 pt-1">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span className="font-mono tabular-nums">{vh.publishedAt}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>By {vh.publishedBy}</span>
+                          {vh.sourceSessionId && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono">{vh.sourceSessionId}</span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: Selected Historical Version Rule Snapshot */}
+            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {inspectedSnapshot ? (
+                <>
+                  <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs text-slate-500 mb-0.5">
+                        <span>Historical Version Snapshot</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono font-semibold text-slate-800">
+                          Published {inspectedSnapshot.publishedAt}
+                        </span>
+                      </div>
+                      <h3 className="font-display text-base font-bold text-slate-900">
+                        {selectedPolicy.name} — {inspectedSnapshot.version} (
+                        {inspectedSnapshot.rules.length} Clauses)
+                      </h3>
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">
+                      Read-Only Immutable Snapshot
+                    </span>
+                  </div>
+
+                  <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
+                    <strong className="text-slate-800">Release Changelog:</strong>{' '}
+                    {inspectedSnapshot.changeSummary}
+                  </div>
+
+                  <div className="divide-y divide-slate-200">
+                    {inspectedSnapshot.rules.map((r) => (
+                      <div key={r.id} className="p-5 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-blue-700">{r.code}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-semibold text-slate-900">{r.title}</span>
+                          </div>
+                          <SeverityText severity={r.severity} />
+                        </div>
+                        <p className="text-xs text-slate-700 leading-relaxed">{r.description}</p>
+                        <p className="text-[11px] text-slate-500">
+                          <strong className="text-slate-700">Evidence Required:</strong>{' '}
+                          {r.evidenceRequired}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="p-10 text-center text-xs text-slate-500">
+                  Select a published version on the left to inspect its rule snapshot.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Add Rule Modal */}
         {addRuleModalOpen && (
@@ -326,7 +639,7 @@ export const PolicyLibrary: React.FC = () => {
             <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
                 <h3 className="font-display text-base font-bold text-slate-900">
-                  Add Rule to {selectedPolicy.name}
+                  Add Clause to {selectedPolicy.name}
                 </h3>
                 <button
                   onClick={() => setAddRuleModalOpen(false)}
@@ -354,7 +667,7 @@ export const PolicyLibrary: React.FC = () => {
                       type="text"
                       value={ruleCode}
                       onChange={(e) => setRuleCode(e.target.value)}
-                      placeholder="e.g., ENV-105"
+                      placeholder="e.g., ENV-108"
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono focus:outline-none focus:border-blue-600"
                     />
                   </div>
@@ -422,6 +735,24 @@ export const PolicyLibrary: React.FC = () => {
                   />
                 </div>
 
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Publication Mode
+                  </label>
+                  <select
+                    value={ruleAddTarget}
+                    onChange={(e) => setRuleAddTarget(e.target.value as 'draft' | 'publish')}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-blue-600"
+                  >
+                    <option value="draft">
+                      Stage in Draft Workspace (Does not alter active version)
+                    </option>
+                    <option value="publish">
+                      Publish Immediately as New Policy Version
+                    </option>
+                  </select>
+                </div>
+
                 <div className="pt-2 flex items-center justify-end gap-2">
                   <button
                     type="button"
@@ -443,7 +774,7 @@ export const PolicyLibrary: React.FC = () => {
           </div>
         )}
 
-        {/* Policy Edit Modal (reused when editing from detail view) */}
+        {/* Policy Edit Modal */}
         {policyModalOpen && (
           <PolicyFormModal
             editingPolicy={editingPolicy}
@@ -477,8 +808,8 @@ export const PolicyLibrary: React.FC = () => {
             Corporate Policy & Brand Guideline Repository
           </h2>
           <p className="text-sm text-slate-600 mt-0.5">
-            Manage versioned compliance policies, inspect enforceable rule clauses, and control
-            publication lifecycle status.
+            Manage versioned compliance policies, inspect immutable version history snapshots, and
+            control draft vs. active publication states.
           </p>
         </div>
         <button
@@ -549,7 +880,7 @@ export const PolicyLibrary: React.FC = () => {
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
                   <th className="py-3 px-5">Policy Name</th>
                   <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Version</th>
+                  <th className="py-3 px-4">Version & History</th>
                   <th className="py-3 px-4">Clauses</th>
                   <th className="py-3 px-4">Last Updated</th>
                   <th className="py-3 px-4">Status</th>
@@ -557,66 +888,81 @@ export const PolicyLibrary: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredPolicies.map((policy) => (
-                  <tr key={policy.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-5">
-                      <button
-                        onClick={() => setSelectedPolicyIdForDetail(policy.id)}
-                        className="font-semibold text-slate-900 hover:text-blue-600 text-left block"
-                      >
-                        {policy.name}
-                      </button>
-                      <span className="text-[11px] text-slate-500 block mt-0.5 line-clamp-1 max-w-md">
-                        {policy.description}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
-                      {policy.category}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono font-medium text-slate-800 whitespace-nowrap tabular-nums">
-                      {policy.version}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-600 whitespace-nowrap tabular-nums">
-                      {policy.rules.length} rules
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap tabular-nums">
-                      {policy.lastUpdated}
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <PolicyStatusIndicator status={policy.status} />
-                    </td>
-                    <td className="py-3.5 px-5 text-right whitespace-nowrap">
-                      <div className="inline-flex items-center justify-end gap-1">
+                {filteredPolicies.map((policy) => {
+                  const draftCount = policy.draftRules?.length || 0;
+                  const histCount = policy.versionHistory?.length || 0;
+                  return (
+                    <tr key={policy.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3.5 px-5">
                         <button
                           onClick={() => setSelectedPolicyIdForDetail(policy.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                          title="View policy clauses"
+                          className="font-semibold text-slate-900 hover:text-blue-600 text-left block"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>View</span>
+                          {policy.name}
                         </button>
-                        <button
-                          onClick={() => handleOpenEditModal(policy)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Edit policy"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>Edit</span>
-                        </button>
-                        <button
-                          onClick={() => toggleArchivePolicy(policy.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
-                          title={
-                            policy.status === 'Archived' ? 'Restore policy' : 'Archive policy'
-                          }
-                        >
-                          <Archive className="w-3.5 h-3.5" />
-                          <span>{policy.status === 'Archived' ? 'Restore' : 'Archive'}</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        <span className="text-[11px] text-slate-500 block mt-0.5 line-clamp-1 max-w-md">
+                          {policy.description}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
+                        {policy.category}
+                      </td>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                          {policy.version}
+                        </span>
+                        <span className="text-slate-400 mx-1">·</span>
+                        <span className="text-[11px] text-slate-500 tabular-nums">
+                          {histCount} rel
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-600 whitespace-nowrap tabular-nums">
+                        <span>{policy.rules.length} active</span>
+                        {draftCount > 0 && (
+                          <span className="text-amber-700 ml-1">
+                            · {draftCount} draft
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap tabular-nums">
+                        {policy.lastUpdated}
+                      </td>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <PolicyStatusIndicator status={policy.status} />
+                      </td>
+                      <td className="py-3.5 px-5 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setSelectedPolicyIdForDetail(policy.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                            title="View policy clauses and version history"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View</span>
+                          </button>
+                          <button
+                            onClick={() => handleOpenEditModal(policy)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
+                            title="Edit policy"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            onClick={() => toggleArchivePolicy(policy.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                            title={
+                              policy.status === 'Archived' ? 'Restore policy' : 'Archive policy'
+                            }
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                            <span>{policy.status === 'Archived' ? 'Restore' : 'Archive'}</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
