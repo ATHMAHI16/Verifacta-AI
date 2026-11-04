@@ -1,0 +1,6 @@
+{
+  "name": "Verifacta AI",
+  "description": "Evidence-grounded brand governance and content compliance platform featuring policy compilation, four-state content verification, red-team stress testing, and audit trail workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
