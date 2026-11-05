@@ -1,107 +1,68 @@
-# Verifacta AI — Phase 1A: Policy Governance & Synchronization Upgrade
+# Verifacta AI — Phase 1A.1: Critical Governance Corrections
 
-Phase 1A upgrades the **Policy Compiler → Policy Library → Content Verification** governance pipeline by introducing structured **Compilation Sessions**, strict ambiguity gates, a two-stage **Review Compilation & Publish Policy** workflow, immutable **Policy Version History**, and historical rule snapshots on **Audit Trail** records.
+Phase 1A.1 hardens the governance integrity of **Verifacta AI** by eliminating silent policy fallbacks during content verification, preventing false reconstruction of missing historical audit snapshots, adding concurrency and immutability locks to compilation operations, and protecting published policy version histories from metadata edits.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following governance rules were confirmed during Phase 1A planning and define the compilation, publication, and versioning boundaries:
+> The following confirmed governance behaviors govern this update:
 
-- **Strict Session Completion Gate**: A Compilation Session can only be published once **every** candidate rule in that session has been explicitly reviewed (`Approved` or `Rejected`), with zero rules remaining in `Pending` or `Needs Clarification`, and at least one `Approved` rule. Incomplete sessions can be saved as drafts at any time.
-- **Append-Based Rule Merging & Immutable Snapshots**: Publishing a Compilation Session to an existing policy appends the newly approved session rules to the policy's existing active rule set, increments the policy's semantic version, and stores an immutable snapshot of the previous published version in `versionHistory` without ever overwriting historical versions.
-- **Integrated Version History & Switcher**: Inside the **Policy Library** detail view, users can switch between the **Active Rules**, **Draft Rules**, and **Version History** tabs, inspect the full rule snapshot and changelog of any historical version, and promote draft changes only through explicit publication.
-- **Active-Only Verification & Immutable Audit Snapshots**: **Content Verification** evaluates content exclusively against `Active` published policies and embeds an immutable `ruleSnapshot` inside each generated **Audit Trail** record so subsequent policy publications never alter historical reviews.
-
----
-
-## 1. Overview & Core Concept
-
-- **What It Does**: Replaces immediate single-rule promotion with an enterprise-grade two-stage compilation lifecycle. Compliance engineers extract candidate rules into a uniquely identified **Compilation Session** (`CS-2026-XXXX`), resolve ambiguous wording before approval, save incomplete work as drafts, review the full session summary on a dedicated **Review Compilation** screen, and explicitly publish a new immutable version to the **Policy Library**.
-- **Key Governance Guarantees**:
-  1. **No Unresolved Ambiguity**: Rules flagged as ambiguous or `Needs Clarification` cannot be approved or published until their wording is edited/clarified and marked resolved.
-  2. **No Accidental Live Mutation**: Approving an individual rule stages it inside the Compilation Session (`approvedBy`, `approvedAt`) rather than mutating the live active policy mid-review.
-  3. **Idempotent Publication**: Each Compilation Session and candidate rule tracks publication state (`status: 'Published'`, `publishedVersion`), preventing duplicate promotion of the same candidate or double-publishing of a session.
-  4. **Non-Destructive Storage Migration**: Existing `localStorage` data from Phase 1 is automatically migrated on startup to add `versionHistory`, compilation sessions, and audit rule snapshots without erasing user changes.
+- **Zero Silent Policy Fallback in Content Verification**: The policy selector in **Content Verification** lists all policies with explicit status and version labels (`Active`, `Draft`, `Archived`) and displays a pre-verification summary card showing the exact selected policy name, status, and published version. Submitting verification against a nonexistent, `Draft`, or `Archived` policy is deterministically rejected with an explicit error—never falling back to another policy.
+- **Strict Historical Audit Migration (`Available` vs. `Unavailable`)**: In `migrateAudits()`, existing valid snapshots are preserved unchanged. If a migrated audit lacks a snapshot, it is only populated if the exact `policyVersion` exists in the matching policy's `versionHistory`; otherwise `snapshotStatus` is marked `'Unavailable'` with an empty snapshot, and the Audit Trail UI explicitly informs reviewers that the original historical rule snapshot is unavailable rather than substituting current live rules.
+- **Metadata Editor Protection on Published Policies**: Editing an existing policy's metadata in **Policy Library** locks the published `version` string and `status` once a policy has published history, ensuring version increments and rule changes occur exclusively through immutable publication events.
+- **Compilation Operation Locks & Idempotency**: A synchronous + state-backed `isPublishingSession` lock prevents concurrent or duplicate publication calls, blocks any mutation/approval/rejection on `Published` sessions, validates session status and target policy before every operation, and prevents duplicate candidate promotions or duplicate draft rules.
 
 ---
 
-## 2. User Experience & Visual Design
+## 1. Overview of Corrections
 
-### Key User Flows
-1. **Compilation Session Management (`Policy Compiler`)**:
-   - Starting an extraction creates a new **Compilation Session** with a unique ID (e.g., `CS-2026-0102`), timestamp, source guideline title/text, target policy, and session status (`In Review` | `Draft Saved` | `Published`).
-   - Users can switch between active/saved Compilation Sessions via a session selector bar.
-   - Each candidate rule displays its source excerpt, suggested code, and one of four states: **Pending**, **Approved** (with `approvedBy` and `approvedAt` metadata), **Rejected**, or **Needs Clarification**.
-   - Attempting to approve an ambiguous or `Needs Clarification` rule triggers an inline governance block instructing the user to edit the rule text and click **Resolve Ambiguity** first.
-2. **Review Compilation & Publish Modal/Screen (`Policy Compiler`)**:
-   - Clicking **Save as Draft** preserves the current session and candidate states as a draft session and syncs staged draft rules to the target policy's draft workspace without altering its active version.
-   - Clicking **Review Compilation** switches to the dedicated **Review Compilation** screen summarizing counts and tables of Approved, Rejected, Pending, and Needs Clarification rules, target policy version bump preview (`v3.2.0 → v3.3.0`), and release notes input.
-   - Once all rules are reviewed (`Pending === 0` and `Needs Clarification === 0`) and confirmed by the user, clicking **Confirm & Publish Policy Version** publishes the new policy version, records the immutable snapshot in `versionHistory`, and locks the session against duplicate publication.
-3. **Policy Version History & Draft Separation (`Policy Library`)**:
-   - The Policy Detail view features three sub-views:
-     - **Active Published Rules**: Shows the currently active version (`vX.Y.Z`) used by Content Verification.
-     - **Draft Workspace**: Shows staged draft rules from saved draft compilations or manual draft edits, kept strictly isolated from the active published rules.
-     - **Version History**: Displays a chronological timeline of all published versions (`v3.1.0`, `v3.2.0`, `v3.3.0`) with publication dates, authors, change summaries, and an **Inspect Version Snapshot** drawer/view to browse the exact rule set of any historical version.
-4. **Version-Locked Verification & Audit Trail (`Content Verification` & `Audit Trail`)**:
-   - The policy selector in **Content Verification** lists only `Active` published policies and displays the active version badge.
-   - Every new **AuditRecord** stores `policyVersion` alongside `policyRulesSnapshot: PolicyRule[]`, and the **Audit Trail** detail view allows reviewers to inspect the exact historical rule snapshot that governed that verification run.
+1. **Fix Incorrect Policy Fallback During Verification (`runDeterministicVerification` & `ContentVerification.tsx`)**:
+   - Remove the fallback `requestedPolicy && requestedPolicy.status === 'Active' ? requestedPolicy : activePolicies[0]`.
+   - Look up `policies.find(p => p.id === policyId)` directly:
+     - If `!requestedPolicy`, return an explicit error: `"Verification rejected: Selected policy ID '${policyId}' does not exist."`
+     - If `requestedPolicy.status === 'Draft'`, return an explicit error: `"Verification rejected: Policy '${requestedPolicy.name}' (${requestedPolicy.version}) is in Draft status and has not been published."`
+     - If `requestedPolicy.status === 'Archived'`, return an explicit error: `"Verification rejected: Policy '${requestedPolicy.name}' (${requestedPolicy.version}) is Archived and cannot be used for active compliance verification."`
+   - Display a prominent **Selected Policy Target** summary box above the **Verify Content** button showing the selected policy's exact name, status indicator, and published version before verification runs.
+2. **Fix Historical Audit Migration (`migrateAudits` & `AuditTrail.tsx`)**:
+   - Add `snapshotStatus?: 'Available' | 'Unavailable'` to `AuditRecord`.
+   - In `migrateAudits()`:
+     - If `aud.policyRulesSnapshot` is already a non-empty array and `aud.snapshotStatus !== 'Unavailable'`, keep it unchanged with `snapshotStatus: 'Available'`.
+     - If `aud.snapshotStatus === 'Unavailable'`, keep it `'Unavailable'` with `policyRulesSnapshot: []`.
+     - Otherwise, check ONLY `matchingPolicy?.versionHistory?.find(vh => vh.version === aud.policyVersion)`. If found, copy those exact version rules and set `snapshotStatus: 'Available'`.
+     - If the exact historical `policyVersion` is not found in `versionHistory`, NEVER fall back to `matchingPolicy.rules`; set `snapshotStatus: 'Unavailable'` and `policyRulesSnapshot: []`.
+   - Include a legacy audit record (`REV-2025-0412` referencing `v2.0.0` where `v2.0.0` is absent from `versionHistory`) so reviewers can immediately inspect the `Unavailable` historical snapshot state in **Audit Trail**.
+3. **Strengthen Compilation Operations (`VerifactaContext.tsx` & `PolicyCompiler.tsx`)**:
+   - Add a `publishingLockRef` (`useRef<boolean>(false)`) alongside `isPublishing` state to guard `publishCompilationSession` against rapid double-clicks or concurrent invocations.
+   - Enforce pre-operation validation across `updateCandidateRule`, `resolveCandidateAmbiguity`, `markCandidateNeedsClarification`, `approveCandidateInSession`, `rejectCandidateRule`, `saveCompilationAsDraft`, and `publishCompilationSession`:
+     - Reject any operation if `session.status === 'Published'` or `isPublishing` is active.
+     - Validate that the target policy exists and is not `Archived` before every candidate or session operation.
+     - Check across the target policy's active `rules`, `draftRules`, and `versionHistory` to prevent duplicate promotion of the same candidate rule.
+4. **Protect Policy Version History (`VerifactaContext.tsx` & `PolicyLibrary.tsx`)**:
+   - Deep-clone rule arrays when creating or migrating `versionHistory` snapshots so no reference is ever shared with mutable `draftRules` or metadata fields.
+   - In `updatePolicy`, strip/ignore direct mutations to `rules`, `versionHistory`, or `version` on policies that have published history, ensuring metadata edits (`name`, `category`, `owner`, `description`) never alter published rules or overwrite version snapshots.
 
 ---
 
-## 3. Technical Architecture & Data Strategy
-
-### Architecture & State Flow Diagram
+## 2. Technical Architecture & Verification Matrix
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                     VerifactaContext (with Safe v1 → v1A Migration)              │
-│  CompilationSessions[]  │  Policies (Active + Draft + VersionHistory[])  │ Audits│
-└────────────┬────────────────────────────────────┬───────────────────────────┬────┘
-             │                                    │                           │
-┌────────────▼─────────────┐        ┌─────────────▼─────────────┐ ┌───────────▼────┐
-│     Policy Compiler      │        │      Policy Library       │ │ Verification & │
-│ ┌──────────────────────┐ │        │ ┌───────────────────────┐ │ │  Audit Trail   │
-│ │ 1. Session Workspace │ │        │ │ Active Published View │ │ │ ┌────────────┐ │
-│ │  • Pending           │ │        │ ├───────────────────────┤ │ │ │ Active-Only│ │
-│ │  • Needs Clarif.     │ │        │ │ Draft Rules Workspace │ │ │ │ Policy     │ │
-│ │  • Approved (Who/When│ │        │ ├───────────────────────┤ │ │ │ Selector   │ │
-│ │  • Rejected          │ │        │ │ Version History Tab   │ │ │ └─────┬──────┘ │
-│ └──────────┬───────────┘ │        │ │  • v3.3.0 (Current)   │ │ │       │        │
-│            ▼             │        │ │  • v3.2.0 (Snapshot)  │ │ │ ┌─────▼──────┐ │
-│ ┌──────────────────────┐ │Publish │ │  • v3.1.0 (Snapshot)  │ │ │ │ Immutable  │ │
-│ │ 2. Review Compilation├─┼────────┼─► Immutable Append      │ │ │ │ Audit Rule │ │
-│ │  • Save as Draft     │ │        │ └───────────────────────┘ │ │ │ Snapshot   │ │
-│ │  • Confirm & Publish │ │        │                           │ │ └────────────┘ │
-│ └──────────────────────┘ │        └───────────────────────────┘ └────────────────┘
-└──────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       Phase 1A.1 Governance Safeguards                       │
+├──────────────────────────────────────┬───────────────────────────────────────┤
+│ 1. Verification Gate                 │ 2. Historical Audit Migration         │
+│  • Lookup policyId exact match       │  • Existing valid snapshot → Keep     │
+│  • Missing ID → Reject (No fallback) │  • Exact version in history → Restore │
+│  • Status === 'Draft' → Reject       │  • Missing historical version →       │
+│  • Status === 'Archived' → Reject    │    Mark snapshotStatus: 'Unavailable' │
+│  • Status === 'Active' → Evaluate    │    (Never substitute active rules)    │
+├──────────────────────────────────────┼───────────────────────────────────────┤
+│ 3. Compilation Session Locks         │ 4. Version History Protection         │
+│  • publishingLockRef concurrency lock│  • Deep-cloned frozen rule snapshots  │
+│  • Block edits/approvals/rejections  │  • Metadata editor locks version &    │
+│    on Published sessions             │    preserves published rules          │
+│  • Deduplicate draft & active rules  │  • Every publication appends new ver  │
+└──────────────────────────────────────┴───────────────────────────────────────┘
 ```
 
-### Updated Data Model Entities
-- **`CandidateRuleStatus`**: `'Pending' | 'Approved' | 'Rejected' | 'Needs Clarification'`
-- **`CompiledCandidateRule`**:
-  - Preserves `sourceExcerpt`, `extractedRule`, `suggestedCode`, `category`, `severity`, `evidenceRequired`, `confidence`, `isAmbiguous`, `ambiguityNote`, `status`.
-  - Adds `sessionId: string`, `ambiguityResolved?: boolean`, `resolutionNote?: string`, `approvedBy?: string`, `approvedAt?: string`, `rejectedBy?: string`, `rejectedAt?: string`, `promotedToPolicyId?: string`, `publishedVersion?: string`.
-- **`CompilationSession`**:
-  - `id: string` (e.g., `CS-2026-0101`)
-  - `title: string`
-  - `sourceText: string`
-  - `targetPolicyId: string`
-  - `createdAt: string`
-  - `updatedAt: string`
-  - `status: 'In Review' | 'Draft Saved' | 'Published'`
-  - `publishedVersion?: string`
-  - `publishedAt?: string`
-  - `publishedBy?: string`
-  - `candidates: CompiledCandidateRule[]`
-- **`PolicyVersionSnapshot`**:
-  - `version: string`
-  - `publishedAt: string`
-  - `publishedBy: string`
-  - `changeSummary: string`
-  - `sourceSessionId?: string`
-  - `rules: PolicyRule[]` (complete immutable snapshot of all rules in that version)
-- **`Policy`**:
-  - Retains `id`, `name`, `category`, `version`, `lastUpdated`, `status`, `description`, `owner`, `rules` (currently active published rules).
-  - Adds `draftRules?: PolicyRule[]` (staged draft rules kept separate from active `rules`) and `versionHistory: PolicyVersionSnapshot[]`.
-- **`AuditRecord`**:
-  - Retains all existing fields and adds `policyRulesSnapshot: PolicyRule[]` so historical audit reviews always retain the exact clauses evaluated at the moment of verification.
+### Interactive Governance Verification Suite
+In addition to standard interactive usage across all views, we will include a built-in **Governance Self-Test & Verification Runner** in the **Settings** view that executes and reports pass/fail assertions for all 10 required test scenarios (nonexistent policy rejection, Draft policy rejection, Archived policy rejection, zero silent fallback, audit migration with existing version, audit migration with missing version marked `Unavailable`, published session modification block, duplicate publication block, and version snapshot immutability).

@@ -11,7 +11,7 @@ import {
 import { useVerifacta } from '../context/VerifactaContext';
 import { SAMPLE_CONTENT_DRAFTS } from '../data/mockData';
 import { VerificationFinding, VerificationState, AuditRecord } from '../types';
-import { FourStateIndicator } from '../components/StatusIndicators';
+import { FourStateIndicator, PolicyStatusIndicator } from '../components/StatusIndicators';
 
 export const ContentVerification: React.FC = () => {
   const {
@@ -24,18 +24,12 @@ export const ContentVerification: React.FC = () => {
     setActiveTab,
   } = useVerifacta();
 
-  // Only Active published policies can be used for Content Verification
-  const activePublishedPolicies = policies.filter((p) => p.status === 'Active');
-  const inactivePoliciesCount = policies.length - activePublishedPolicies.length;
-
   const defaultDraft = SAMPLE_CONTENT_DRAFTS[0];
 
   const [selectedDraftId, setSelectedDraftId] = useState<string>(defaultDraft.id);
   const [contentTitle, setContentTitle] = useState<string>(defaultDraft.title);
   const [contentRevision, setContentRevision] = useState<string>(defaultDraft.revision);
-  const [selectedPolicyId, setSelectedPolicyId] = useState<string>(
-    activePublishedPolicies[0]?.id || defaultDraft.policyId
-  );
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string>(defaultDraft.policyId);
   const [contentBody, setContentBody] = useState<string>(defaultDraft.content);
   const [validationError, setValidationError] = useState<string>('');
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
@@ -43,39 +37,51 @@ export const ContentVerification: React.FC = () => {
   const [findings, setFindings] = useState<VerificationFinding[]>(() =>
     defaultDraft.presetFindings.map((f, idx) => ({ ...f, id: `init-find-${idx}` }))
   );
-  const [evaluatedVersionTag, setEvaluatedVersionTag] = useState<string>(
-    activePublishedPolicies[0]?.version || 'v3.2.0'
-  );
+  const [evaluatedPolicySummary, setEvaluatedPolicySummary] = useState<{
+    name: string;
+    version: string;
+    ruleCount: number;
+  }>(() => {
+    const initialPol = policies.find((p) => p.id === defaultDraft.policyId) || policies[0];
+    return {
+      name: initialPol?.name || 'Environmental & Sustainability Claims Policy',
+      version: initialPol?.version || 'v3.2.0',
+      ruleCount: initialPol?.rules.length || 4,
+    };
+  });
   const [latestAuditRecord, setLatestAuditRecord] = useState<AuditRecord | null>(null);
   const [stateFilter, setStateFilter] = useState<'All' | VerificationState>('All');
 
   useEffect(() => {
     if (preselectedVerifyPolicyId) {
-      const targetActive = activePublishedPolicies.find(
-        (p) => p.id === preselectedVerifyPolicyId
+      setSelectedPolicyId(preselectedVerifyPolicyId);
+      setValidationError('');
+      const matchingDraft = SAMPLE_CONTENT_DRAFTS.find(
+        (d) => d.policyId === preselectedVerifyPolicyId
       );
-      if (targetActive) {
-        setSelectedPolicyId(targetActive.id);
-        setEvaluatedVersionTag(targetActive.version);
-        const matchingDraft = SAMPLE_CONTENT_DRAFTS.find(
-          (d) => d.policyId === preselectedVerifyPolicyId
-        );
-        if (matchingDraft) {
-          setSelectedDraftId(matchingDraft.id);
-          setContentTitle(matchingDraft.title);
-          setContentRevision(matchingDraft.revision);
-          setContentBody(matchingDraft.content);
+      if (matchingDraft) {
+        setSelectedDraftId(matchingDraft.id);
+        setContentTitle(matchingDraft.title);
+        setContentRevision(matchingDraft.revision);
+        setContentBody(matchingDraft.content);
+        const pol = policies.find((p) => p.id === preselectedVerifyPolicyId);
+        if (pol && pol.status === 'Active') {
           setFindings(
             matchingDraft.presetFindings.map((f, idx) => ({
               ...f,
               id: `preset-find-${idx}`,
             }))
           );
+          setEvaluatedPolicySummary({
+            name: pol.name,
+            version: pol.version,
+            ruleCount: pol.rules.length,
+          });
         }
       }
       setPreselectedVerifyPolicyId(null);
     }
-  }, [preselectedVerifyPolicyId, setPreselectedVerifyPolicyId, activePublishedPolicies]);
+  }, [preselectedVerifyPolicyId, setPreselectedVerifyPolicyId, policies]);
 
   const handleSelectDraft = (draftId: string) => {
     const draft = SAMPLE_CONTENT_DRAFTS.find((d) => d.id === draftId);
@@ -83,31 +89,32 @@ export const ContentVerification: React.FC = () => {
     setSelectedDraftId(draft.id);
     setContentTitle(draft.title);
     setContentRevision(draft.revision);
-    const matchingActivePolicy =
-      activePublishedPolicies.find((p) => p.id === draft.policyId) ||
-      activePublishedPolicies[0];
-    if (matchingActivePolicy) {
-      setSelectedPolicyId(matchingActivePolicy.id);
-      setEvaluatedVersionTag(matchingActivePolicy.version);
-    }
+    setSelectedPolicyId(draft.policyId);
     setContentBody(draft.content);
     setValidationError('');
-    setFindings(
-      draft.presetFindings.map((f, idx) => ({
-        ...f,
-        id: `draft-find-${Date.now()}-${idx}`,
-      }))
-    );
+    const targetPol = policies.find((p) => p.id === draft.policyId);
+    if (targetPol && targetPol.status === 'Active') {
+      setFindings(
+        draft.presetFindings.map((f, idx) => ({
+          ...f,
+          id: `draft-find-${Date.now()}-${idx}`,
+        }))
+      );
+      setEvaluatedPolicySummary({
+        name: targetPol.name,
+        version: targetPol.version,
+        ruleCount: targetPol.rules.length,
+      });
+    }
   };
 
   const handleVerifyContent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!contentTitle.trim() || !contentBody.trim() || !selectedPolicyId) {
-      setValidationError(
-        'Please provide a content title, select an active published policy, and enter marketing content to verify.'
-      );
+    if (!contentTitle.trim() || !contentBody.trim()) {
+      setValidationError('Please provide both a content title and marketing copy to verify.');
       return;
     }
+
     setValidationError('');
     setIsVerifying(true);
 
@@ -120,11 +127,16 @@ export const ContentVerification: React.FC = () => {
       );
       if (result.error) {
         setValidationError(result.error);
+        setFindings([]);
       } else {
         setFindings(result.findings);
-        const chosenPol = activePublishedPolicies.find((p) => p.id === selectedPolicyId);
+        const chosenPol = policies.find((p) => p.id === selectedPolicyId);
         if (chosenPol) {
-          setEvaluatedVersionTag(chosenPol.version);
+          setEvaluatedPolicySummary({
+            name: chosenPol.name,
+            version: chosenPol.version,
+            ruleCount: chosenPol.rules.length,
+          });
         }
         if (result.auditRecord) {
           setLatestAuditRecord(result.auditRecord);
@@ -132,12 +144,11 @@ export const ContentVerification: React.FC = () => {
         setStateFilter('All');
       }
       setIsVerifying(false);
-    }, 320);
+    }, 260);
   };
 
-  const activePolicy =
-    activePublishedPolicies.find((p) => p.id === selectedPolicyId) ||
-    activePublishedPolicies[0];
+  // Exact lookup without fallback
+  const selectedPolicy = policies.find((p) => p.id === selectedPolicyId) || null;
 
   const counts = {
     Supported: findings.filter((f) => f.state === 'Supported').length,
@@ -158,16 +169,16 @@ export const ContentVerification: React.FC = () => {
           <div className="flex items-center gap-2 text-xs text-blue-700 font-medium mb-1">
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>
-              Active Published Policy Enforcement · Four-State Classification
+              Strict Active Published Policy Enforcement · Zero Silent Policy Substitution
             </span>
           </div>
           <h2 className="font-display text-xl font-bold text-slate-900">
             Evidence-Grounded Content Verification
           </h2>
           <p className="text-sm text-slate-600 mt-0.5 max-w-3xl">
-            Evaluate draft marketing copy against the currently active published version of a
-            corporate policy. Every verification locks an immutable snapshot of the policy version
-            and rule set into the Audit Trail.
+            Evaluate draft marketing copy against a selected policy. Verification strictly requires
+            an Active published policy version—requests targeting Draft, Archived, or nonexistent
+            policies are rejected without substituting another policy.
           </p>
         </div>
 
@@ -203,9 +214,12 @@ export const ContentVerification: React.FC = () => {
           </div>
 
           {validationError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{validationError}</span>
+            <div className="p-3.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800 font-medium flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-red-900">Verification Rejected</p>
+                <p className="leading-relaxed">{validationError}</p>
+              </div>
             </div>
           )}
 
@@ -260,48 +274,97 @@ export const ContentVerification: React.FC = () => {
             </div>
           </div>
 
-          {/* Active Published Policy Selection Only */}
+          {/* Governing Policy Selection (All Policies Shown with Status & Version) */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold text-slate-700">
-                Active Published Policy *
+                Governing Policy Selection *
               </label>
-              {activePolicy && (
+              {selectedPolicy && (
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedPolicyIdForDetail(activePolicy.id);
+                    setSelectedPolicyIdForDetail(selectedPolicy.id);
                     setActiveTab('policy-library');
                   }}
                   className="text-[11px] font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
                 >
                   <BookOpen className="w-3 h-3" />
-                  <span>
-                    Inspect {activePolicy.version} ({activePolicy.rules.length} active clauses)
-                  </span>
+                  <span>Inspect in Library</span>
                 </button>
               )}
             </div>
             <select
               value={selectedPolicyId}
-              onChange={(e) => setSelectedPolicyId(e.target.value)}
+              onChange={(e) => {
+                setSelectedPolicyId(e.target.value);
+                setValidationError('');
+              }}
               className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-blue-600"
             >
-              {activePublishedPolicies.map((pol) => (
+              {policies.map((pol) => (
                 <option key={pol.id} value={pol.id}>
-                  {pol.name} ({pol.version} · {pol.rules.length} Active Clauses)
+                  {pol.name} — {pol.version} [{pol.status}]
                 </option>
               ))}
+              <option value="pol-nonexistent-999">
+                [Governance Test] Nonexistent Policy ID (pol-nonexistent-999)
+              </option>
             </select>
-            {inactivePoliciesCount > 0 && (
-              <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                <span>
-                  {inactivePoliciesCount} Draft/Archived policy excluded. Only Active published
-                  versions are used for verification.
-                </span>
-              </p>
-            )}
+
+            {/* Pre-Verification Selected Policy Target Summary Box */}
+            <div
+              className={`mt-2.5 p-3 rounded-lg border text-xs ${
+                !selectedPolicy
+                  ? 'bg-red-50/70 border-red-200 text-red-900'
+                  : selectedPolicy.status === 'Active'
+                  ? 'bg-slate-50 border-slate-200 text-slate-700'
+                  : 'bg-amber-50/70 border-amber-200 text-amber-900'
+              }`}
+            >
+              {selectedPolicy ? (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900 truncate">
+                      {selectedPolicy.name}
+                    </span>
+                    <PolicyStatusIndicator status={selectedPolicy.status} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                    <span>
+                      Published Version:{' '}
+                      <strong className="font-mono text-slate-900">
+                        {selectedPolicy.status === 'Draft' &&
+                        (selectedPolicy.versionHistory?.length || 0) === 0
+                          ? `${selectedPolicy.version} (Unpublished Draft)`
+                          : selectedPolicy.version}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono">
+                      {selectedPolicy.rules.length} active published clause(s)
+                    </span>
+                  </div>
+                  {selectedPolicy.status !== 'Active' && (
+                    <p className="text-[11px] font-medium text-amber-800 pt-1 flex items-center gap-1">
+                      <Lock className="w-3 h-3 shrink-0" />
+                      <span>
+                        This policy is {selectedPolicy.status}. Submitting verification will be
+                        rejected without substituting another policy.
+                      </span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-red-800">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>
+                    Selected Policy ID <strong className="font-mono">{selectedPolicyId}</strong>{' '}
+                    does not exist. Verification will be rejected without fallback.
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Content Body Input */}
@@ -322,7 +385,7 @@ export const ContentVerification: React.FC = () => {
               </button>
             </div>
             <textarea
-              rows={12}
+              rows={11}
               value={contentBody}
               onChange={(e) => {
                 setContentBody(e.target.value);
@@ -341,8 +404,10 @@ export const ContentVerification: React.FC = () => {
             <FileSearch className="w-4 h-4" />
             <span>
               {isVerifying
-                ? 'Evaluating Against Active Published Clauses...'
-                : `Verify Content Against ${activePolicy?.version || 'Active Policy'}`}
+                ? 'Evaluating Against Selected Policy...'
+                : selectedPolicy
+                ? `Verify Content Against ${selectedPolicy.name} (${selectedPolicy.version})`
+                : `Attempt Verification (${selectedPolicyId})`}
             </span>
           </button>
         </form>
@@ -357,12 +422,12 @@ export const ContentVerification: React.FC = () => {
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Evaluated against{' '}
-                  <span className="font-medium text-slate-700">{activePolicy?.name}</span> · Active
-                  Version{' '}
+                  <span className="font-medium text-slate-700">{evaluatedPolicySummary.name}</span>{' '}
+                  · Published Version{' '}
                   <span className="font-mono font-semibold text-blue-700">
-                    {activePolicy?.version || evaluatedVersionTag}
+                    {evaluatedPolicySummary.version}
                   </span>{' '}
-                  ({activePolicy?.rules.length} active clauses)
+                  ({evaluatedPolicySummary.ruleCount} active clauses)
                 </p>
               </div>
               <span className="text-[11px] text-slate-500">
@@ -439,6 +504,16 @@ export const ContentVerification: React.FC = () => {
                 </div>
               ))}
             </div>
+          ) : validationError ? (
+            <div className="p-12 text-center space-y-2">
+              <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
+              <p className="text-sm font-semibold text-slate-900">
+                Verification Blocked by Policy Governance Gate
+              </p>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                {validationError}
+              </p>
+            </div>
           ) : filteredFindings.length === 0 ? (
             <div className="p-12 text-center">
               <p className="text-sm font-semibold text-slate-900">
@@ -455,7 +530,6 @@ export const ContentVerification: React.FC = () => {
                   key={finding.id}
                   className="p-6 space-y-3 hover:bg-slate-50/50 transition-colors"
                 >
-                  {/* Header Row: Four-State Classification + Matching Policy Clause + Confidence */}
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <FourStateIndicator state={finding.state} />
@@ -473,7 +547,6 @@ export const ContentVerification: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Relevant Content Excerpt */}
                   <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-lg text-xs text-slate-800">
                     <span className="font-semibold text-slate-500 block mb-0.5 text-[11px]">
                       Evaluated Content Excerpt:
@@ -481,13 +554,11 @@ export const ContentVerification: React.FC = () => {
                     <p className="italic leading-relaxed">{finding.excerpt}</p>
                   </div>
 
-                  {/* Explanation */}
                   <div className="text-xs text-slate-700 leading-relaxed">
                     <span className="font-semibold text-slate-900">Verification Assessment: </span>
                     <span>{finding.explanation}</span>
                   </div>
 
-                  {/* Evidence Reference */}
                   <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                     <div>
                       <span className="font-semibold text-slate-700">Evidence Reference: </span>

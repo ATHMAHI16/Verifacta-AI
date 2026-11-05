@@ -28,6 +28,7 @@ export const PolicyCompiler: React.FC = () => {
     compilationSessions,
     activeSessionId,
     setActiveSessionId,
+    isPublishingSession,
     createCompilationSession,
     setSessionTargetPolicy,
     updateCandidateRule,
@@ -595,9 +596,9 @@ export const PolicyCompiler: React.FC = () => {
 
               <button
                 onClick={handlePublishSessionClick}
-                disabled={!canPublishSession && !isSessionPublished}
+                disabled={(!canPublishSession && !isSessionPublished) || isPublishingSession}
                 className={`inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-lg transition-colors shadow-xs ${
-                  isSessionPublished
+                  isSessionPublished || isPublishingSession
                     ? 'bg-slate-200 text-slate-600 cursor-not-allowed'
                     : canPublishSession
                     ? 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -606,7 +607,9 @@ export const PolicyCompiler: React.FC = () => {
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>
-                  {isSessionPublished
+                  {isPublishingSession
+                    ? 'Publishing Policy Version (Locked)...'
+                    : isSessionPublished
                     ? `Already Published (${activeSession.publishedVersion})`
                     : 'Publish Policy Version'}
                 </span>

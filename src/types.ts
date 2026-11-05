@@ -111,6 +111,8 @@ export interface VerificationFinding {
   confidence: number;
 }
 
+export type SnapshotAvailabilityStatus = 'Available' | 'Unavailable';
+
 export interface AuditRecord {
   id: string; // e.g., REV-2026-0842
   contentTitle: string;
@@ -119,6 +121,7 @@ export interface AuditRecord {
   policyId: string;
   policyName: string;
   policyVersion: string;
+  snapshotStatus?: SnapshotAvailabilityStatus;
   policyRulesSnapshot?: PolicyRule[];
   reviewStatus: ReviewStatus;
   reviewer: string;

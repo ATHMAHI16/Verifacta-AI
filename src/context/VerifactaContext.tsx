@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   NavTab,
   Policy,
@@ -30,7 +30,7 @@ interface ToastMessage {
   type: 'success' | 'info' | 'warning';
 }
 
-interface ActionResult {
+export interface ActionResult {
   ok: boolean;
   message: string;
   publishedVersion?: string;
@@ -49,6 +49,7 @@ interface VerifactaContextType {
   auditRecords: AuditRecord[];
   redTeamScenarios: RedTeamScenario[];
   settings: AppSettings;
+  isPublishingSession: boolean;
   selectedPolicyIdForDetail: string | null;
   setSelectedPolicyIdForDetail: (id: string | null) => void;
   selectedAuditIdForDetail: string | null;
@@ -75,8 +76,8 @@ interface VerifactaContextType {
     targetPolicyId: string,
     extractedCandidates: Omit<CompiledCandidateRule, 'id' | 'status' | 'sessionId'>[]
   ) => CompilationSession;
-  setSessionTargetPolicy: (sessionId: string, targetPolicyId: string) => void;
-  updateCandidateRule: (id: string, updates: Partial<CompiledCandidateRule>) => void;
+  setSessionTargetPolicy: (sessionId: string, targetPolicyId: string) => ActionResult;
+  updateCandidateRule: (id: string, updates: Partial<CompiledCandidateRule>) => ActionResult;
   resolveCandidateAmbiguity: (
     candidateId: string,
     clarifiedRuleText: string,
@@ -84,7 +85,7 @@ interface VerifactaContextType {
     suggestedCode?: string,
     evidenceRequired?: string
   ) => ActionResult;
-  markCandidateNeedsClarification: (candidateId: string, note?: string) => void;
+  markCandidateNeedsClarification: (candidateId: string, note?: string) => ActionResult;
   approveCandidateInSession: (candidateId: string, targetPolicyId?: string) => ActionResult;
   rejectCandidateRule: (candidateId: string) => ActionResult;
   saveCompilationAsDraft: (sessionId: string) => ActionResult;
@@ -123,6 +124,21 @@ const STORAGE_KEYS = {
 
 const VerifactaContext = createContext<VerifactaContextType | undefined>(undefined);
 
+function cloneRule(rule: PolicyRule): PolicyRule {
+  return {
+    ...rule,
+    keywords: Array.isArray(rule.keywords) ? [...rule.keywords] : [],
+    prohibitedTerms: Array.isArray(rule.prohibitedTerms) ? [...rule.prohibitedTerms] : undefined,
+    ambiguousModifiers: Array.isArray(rule.ambiguousModifiers)
+      ? [...rule.ambiguousModifiers]
+      : undefined,
+  };
+}
+
+function cloneRules(rules: PolicyRule[]): PolicyRule[] {
+  return Array.isArray(rules) ? rules.map(cloneRule) : [];
+}
+
 function getNextUniqueVersion(currentVersion: string, existingVersions: string[]): string {
   const match = currentVersion.match(/^v?(\d+)\.(\d+)\.(\d+)$/);
   let major = match ? parseInt(match[1], 10) : 1;
@@ -141,15 +157,21 @@ function nowUtcTimestamp(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
-function migratePolicies(rawPolicies: Policy[]): Policy[] {
+export function migratePolicies(rawPolicies: Policy[]): Policy[] {
   return rawPolicies.map((pol) => {
     const initialMatch = INITIAL_POLICIES.find((ip) => ip.id === pol.id);
     const hasHistory = Array.isArray(pol.versionHistory) && pol.versionHistory.length > 0;
 
     let versionHistory: PolicyVersionSnapshot[] = hasHistory
-      ? pol.versionHistory!
+      ? pol.versionHistory!.map((vh) => ({
+          ...vh,
+          rules: cloneRules(vh.rules),
+        }))
       : initialMatch?.versionHistory
-      ? [...initialMatch.versionHistory]
+      ? initialMatch.versionHistory.map((vh) => ({
+          ...vh,
+          rules: cloneRules(vh.rules),
+        }))
       : pol.status === 'Active' || pol.status === 'Archived'
       ? [
           {
@@ -157,7 +179,7 @@ function migratePolicies(rawPolicies: Policy[]): Policy[] {
             publishedAt: `${pol.lastUpdated || '2026-10-28'} 12:00 UTC`,
             publishedBy: pol.owner?.split('·')[0]?.trim() || 'Compliance Admin',
             changeSummary: 'Initial migrated policy version snapshot.',
-            rules: Array.isArray(pol.rules) ? [...pol.rules] : [],
+            rules: cloneRules(pol.rules),
           },
         ]
       : [];
@@ -173,18 +195,16 @@ function migratePolicies(rawPolicies: Policy[]): Policy[] {
           publishedAt: `${pol.lastUpdated || '2026-11-03'} 12:00 UTC`,
           publishedBy: pol.owner?.split('·')[0]?.trim() || 'Compliance Admin',
           changeSummary: `Migrated active rule set for ${pol.version}.`,
-          rules: Array.isArray(pol.rules) ? [...pol.rules] : [],
+          rules: cloneRules(pol.rules),
         },
         ...versionHistory,
       ];
     }
 
     const draftRules = Array.isArray(pol.draftRules)
-      ? pol.draftRules
+      ? cloneRules(pol.draftRules)
       : pol.status === 'Draft' && (!hasHistory || versionHistory.length === 0)
-      ? Array.isArray(pol.rules)
-        ? [...pol.rules]
-        : []
+      ? cloneRules(pol.rules)
       : [];
 
     return {
@@ -192,16 +212,14 @@ function migratePolicies(rawPolicies: Policy[]): Policy[] {
       rules:
         pol.status === 'Draft' && versionHistory.length === 0
           ? []
-          : Array.isArray(pol.rules)
-          ? pol.rules
-          : [],
+          : cloneRules(pol.rules),
       draftRules,
       versionHistory,
     };
   });
 }
 
-function migrateSessions(
+export function migrateSessions(
   savedSessionsRaw: string | null,
   savedCandidatesRaw: string | null
 ): CompilationSession[] {
@@ -226,7 +244,6 @@ function migrateSessions(
     }
   }
 
-  // If user had Phase 1 candidates in localStorage but no sessions yet, migrate them cleanly
   if (savedCandidatesRaw) {
     try {
       const legacyCandidates: CompiledCandidateRule[] = JSON.parse(savedCandidatesRaw);
@@ -262,22 +279,83 @@ function migrateSessions(
   return INITIAL_COMPILATION_SESSIONS;
 }
 
-function migrateAudits(rawAudits: AuditRecord[], migratedPolicies: Policy[]): AuditRecord[] {
+/**
+ * Phase 1A.1 Critical Correction:
+ * Never substitute current active policy rules when the exact historical policy version is unavailable.
+ * Preserve original policyVersion and existing audit data.
+ * Mark missing historical snapshots as 'Unavailable' without fabricating or substituting rules.
+ */
+export function migrateAudits(rawAudits: AuditRecord[], migratedPolicies: Policy[]): AuditRecord[] {
   return rawAudits.map((aud) => {
-    if (Array.isArray(aud.policyRulesSnapshot) && aud.policyRulesSnapshot.length > 0) {
-      return aud;
+    // 1. If the audit was already explicitly marked Unavailable, preserve Unavailable
+    if (aud.snapshotStatus === 'Unavailable') {
+      return {
+        ...aud,
+        snapshotStatus: 'Unavailable',
+        policyRulesSnapshot: [],
+      };
     }
+
+    // 2. Keep existing valid snapshots unchanged, UNLESS a previous buggy migration
+    // copied current live rules onto an audit whose historical version was missing from versionHistory
     const matchingPolicy = migratedPolicies.find((p) => p.id === aud.policyId);
     const matchingVersionSnapshot = matchingPolicy?.versionHistory?.find(
       (vh) => vh.version === aud.policyVersion
     );
+
+    if (
+      Array.isArray(aud.policyRulesSnapshot) &&
+      aud.policyRulesSnapshot.length > 0
+    ) {
+      // If snapshotStatus was already explicitly 'Available', keep existing valid snapshot untouched
+      if (aud.snapshotStatus === 'Available') {
+        return {
+          ...aud,
+          snapshotStatus: 'Available',
+          policyRulesSnapshot: cloneRules(aud.policyRulesSnapshot),
+        };
+      }
+
+      // If no snapshotStatus was set yet, verify whether the version exists in versionHistory
+      if (matchingVersionSnapshot) {
+        return {
+          ...aud,
+          snapshotStatus: 'Available',
+          policyRulesSnapshot: cloneRules(aud.policyRulesSnapshot),
+        };
+      }
+
+      // If matchingPolicy exists, its versionHistory does NOT have aud.policyVersion,
+      // and the snapshot length equals current live rules, it was a substituted fallback—clear it to Unavailable
+      if (matchingPolicy && !matchingVersionSnapshot) {
+        return {
+          ...aud,
+          snapshotStatus: 'Unavailable',
+          policyRulesSnapshot: [],
+        };
+      }
+
+      return {
+        ...aud,
+        snapshotStatus: 'Available',
+        policyRulesSnapshot: cloneRules(aud.policyRulesSnapshot),
+      };
+    }
+
+    // 3. If no snapshot is stored on the audit yet, ONLY populate if the exact policyVersion exists in versionHistory
+    if (matchingVersionSnapshot && matchingVersionSnapshot.rules.length > 0) {
+      return {
+        ...aud,
+        snapshotStatus: 'Available',
+        policyRulesSnapshot: cloneRules(matchingVersionSnapshot.rules),
+      };
+    }
+
+    // 4. Otherwise, never substitute current active rules; mark snapshotStatus: 'Unavailable'
     return {
       ...aud,
-      policyRulesSnapshot: matchingVersionSnapshot
-        ? [...matchingVersionSnapshot.rules]
-        : matchingPolicy
-        ? [...matchingPolicy.rules]
-        : [],
+      snapshotStatus: 'Unavailable',
+      policyRulesSnapshot: [],
     };
   });
 }
@@ -290,6 +368,8 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [preselectedVerifyPolicyId, setPreselectedVerifyPolicyId] = useState<string | null>(null);
   const [openCreatePolicyModalOnMount, setOpenCreatePolicyModalOnMount] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [isPublishingSession, setIsPublishingSession] = useState(false);
+  const publishingLockRef = useRef<boolean>(false);
 
   const [policies, setPolicies] = useState<Policy[]>(() => {
     try {
@@ -297,7 +377,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const parsed = saved ? JSON.parse(saved) : INITIAL_POLICIES;
       return migratePolicies(parsed);
     } catch {
-      return INITIAL_POLICIES;
+      return migratePolicies(INITIAL_POLICIES);
     }
   });
 
@@ -321,7 +401,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const parsed = saved ? JSON.parse(saved) : INITIAL_AUDIT_RECORDS;
       return migrateAudits(parsed, policies);
     } catch {
-      return INITIAL_AUDIT_RECORDS;
+      return migrateAudits(INITIAL_AUDIT_RECORDS, policies);
     }
   });
 
@@ -343,7 +423,6 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   });
 
-  // Active session's candidates exposed as candidateRules for backwards compatibility
   const activeSession =
     compilationSessions.find((s) => s.id === activeSessionId) || compilationSessions[0];
   const candidateRules = activeSession ? activeSession.candidates : INITIAL_CANDIDATE_RULES;
@@ -412,13 +491,13 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const timestamp = nowUtcTimestamp();
     const isInitialActive = policyData.status === 'Active';
 
-    const initialRules = policyData.rules || [];
+    const initialRules = cloneRules(policyData.rules || []);
     const newPolicy: Policy = {
       ...policyData,
       id: `pol-${Date.now().toString(36)}`,
       lastUpdated: today,
-      rules: isInitialActive ? initialRules : [],
-      draftRules: isInitialActive ? [] : initialRules,
+      rules: isInitialActive ? cloneRules(initialRules) : [],
+      draftRules: isInitialActive ? [] : cloneRules(initialRules),
       versionHistory: isInitialActive
         ? [
             {
@@ -426,7 +505,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               publishedAt: timestamp,
               publishedBy: settings.reviewerName,
               changeSummary: 'Initial published policy version.',
-              rules: initialRules.map((r) => ({ ...r })),
+              rules: cloneRules(initialRules),
             },
           ]
         : [],
@@ -439,12 +518,44 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return newPolicy;
   };
 
+  /**
+   * Phase 1A.1 Protection:
+   * Policy metadata edits must NEVER silently modify published rules, versionHistory, or overwrite
+   * a published version string.
+   */
   const updatePolicy = (id: string, updated: Partial<Policy>) => {
     const today = new Date().toISOString().split('T')[0];
     setPolicies((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updated, lastUpdated: today } : p))
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const hasPublishedHistory = (p.versionHistory?.length || 0) > 0;
+
+        // Protect published rules, versionHistory, and published version string during metadata edits
+        const safeVersion = hasPublishedHistory ? p.version : updated.version ?? p.version;
+        const safeStatus =
+          hasPublishedHistory && updated.status === 'Draft'
+            ? p.status
+            : updated.status ?? p.status;
+
+        return {
+          ...p,
+          name: updated.name ?? p.name,
+          category: updated.category ?? p.category,
+          owner: updated.owner ?? p.owner,
+          description: updated.description ?? p.description,
+          version: safeVersion,
+          status: safeStatus,
+          lastUpdated: today,
+          // Always preserve published rules and versionHistory untouched on metadata edit
+          rules: cloneRules(p.rules),
+          versionHistory: (p.versionHistory || []).map((vh) => ({
+            ...vh,
+            rules: cloneRules(vh.rules),
+          })),
+        };
+      })
     );
-    addToast('Policy Metadata Updated', 'Changes saved to Policy Library.');
+    addToast('Policy Metadata Updated', 'Metadata saved; published rules and version history preserved.');
   };
 
   const toggleArchivePolicy = (id: string) => {
@@ -463,7 +574,6 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
-  // Adds a rule to draftRules by default so active version is never overwritten without explicit publication
   const addRuleToPolicy = (
     policyId: string,
     rule: Omit<PolicyRule, 'id'>,
@@ -482,27 +592,42 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         if (asDraft) {
           const currentDrafts = p.draftRules || [];
-          // Prevent duplicate rule code in draftRules
-          if (currentDrafts.some((dr) => dr.code === newRule.code && dr.title === newRule.title)) {
+          const duplicateInDrafts = currentDrafts.some(
+            (dr) =>
+              dr.code.toLowerCase() === newRule.code.toLowerCase() ||
+              dr.description.trim().toLowerCase() === newRule.description.trim().toLowerCase()
+          );
+          const duplicateInActive = p.rules.some(
+            (ar) =>
+              ar.code.toLowerCase() === newRule.code.toLowerCase() &&
+              ar.description.trim().toLowerCase() === newRule.description.trim().toLowerCase()
+          );
+          if (duplicateInDrafts || duplicateInActive) {
             return p;
           }
           return {
             ...p,
             lastUpdated: today,
-            draftRules: [...currentDrafts, newRule],
+            draftRules: [...currentDrafts, cloneRule(newRule)],
           };
         }
 
-        // If explicitly publishing directly
-        const existingVersions = (p.versionHistory || []).map((vh) => vh.version);
-        const nextVer = getNextUniqueVersion(p.version, existingVersions);
-        const mergedRules = [...p.rules, newRule];
+        // Direct publication creates a brand new immutable snapshot in versionHistory
+        const existingVersions = [
+          p.version,
+          ...(p.versionHistory || []).map((vh) => vh.version),
+        ];
+        const nextVer =
+          p.status === 'Draft' && (p.versionHistory || []).length === 0
+            ? p.version
+            : getNextUniqueVersion(p.version, existingVersions);
+        const mergedRules = [...cloneRules(p.rules), cloneRule(newRule)];
         const snapshot: PolicyVersionSnapshot = {
           version: nextVer,
           publishedAt: nowUtcTimestamp(),
           publishedBy: settings.reviewerName,
           changeSummary: `Added clause ${newRule.code}: ${newRule.title}`,
-          rules: mergedRules.map((r) => ({ ...r })),
+          rules: cloneRules(mergedRules),
         };
 
         return {
@@ -511,81 +636,112 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           version: nextVer,
           lastUpdated: today,
           rules: mergedRules,
-          versionHistory: [snapshot, ...(p.versionHistory || [])],
+          versionHistory: [
+            snapshot,
+            ...(p.versionHistory || []).map((vh) => ({
+              ...vh,
+              rules: cloneRules(vh.rules),
+            })),
+          ],
         };
       })
     );
   };
 
   const publishPolicyDraftRules = (policyId: string, releaseNotes?: string): ActionResult => {
+    if (publishingLockRef.current) {
+      return { ok: false, message: 'A publication operation is already in progress.' };
+    }
     const policy = policies.find((p) => p.id === policyId);
     if (!policy) {
       return { ok: false, message: 'Target policy not found.' };
+    }
+    if (policy.status === 'Archived') {
+      return {
+        ok: false,
+        message: `Policy "${policy.name}" is Archived. Restore it before publishing draft rules.`,
+      };
     }
     const drafts = policy.draftRules || [];
     if (drafts.length === 0) {
       return { ok: false, message: 'No staged draft rules to publish for this policy.' };
     }
 
-    const existingVersions = [
-      policy.version,
-      ...(policy.versionHistory || []).map((vh) => vh.version),
-    ];
-    const nextVersion =
-      policy.status === 'Draft' && (policy.versionHistory || []).length === 0
-        ? policy.version
-        : getNextUniqueVersion(policy.version, existingVersions);
+    publishingLockRef.current = true;
+    setIsPublishingSession(true);
 
-    const mergedRules: PolicyRule[] = [...policy.rules];
-    drafts.forEach((dr) => {
-      const isDuplicate = mergedRules.some(
-        (er) => er.code === dr.code && er.description.trim() === dr.description.trim()
+    try {
+      const existingVersions = [
+        policy.version,
+        ...(policy.versionHistory || []).map((vh) => vh.version),
+      ];
+      const nextVersion =
+        policy.status === 'Draft' && (policy.versionHistory || []).length === 0
+          ? policy.version
+          : getNextUniqueVersion(policy.version, existingVersions);
+
+      const mergedRules: PolicyRule[] = cloneRules(policy.rules);
+      drafts.forEach((dr) => {
+        const isDuplicate = mergedRules.some(
+          (er) =>
+            er.code.toLowerCase() === dr.code.toLowerCase() ||
+            er.description.trim().toLowerCase() === dr.description.trim().toLowerCase()
+        );
+        if (!isDuplicate) {
+          mergedRules.push(cloneRule(dr));
+        }
+      });
+
+      const timestamp = nowUtcTimestamp();
+      const today = new Date().toISOString().split('T')[0];
+      const newSnapshot: PolicyVersionSnapshot = {
+        version: nextVersion,
+        publishedAt: timestamp,
+        publishedBy: settings.reviewerName,
+        changeSummary:
+          releaseNotes?.trim() ||
+          `Published ${drafts.length} staged draft clause(s) (${drafts
+            .map((d) => d.code)
+            .join(', ')}).`,
+        rules: cloneRules(mergedRules),
+      };
+
+      setPolicies((prev) =>
+        prev.map((p) =>
+          p.id === policyId
+            ? {
+                ...p,
+                status: 'Active',
+                version: nextVersion,
+                lastUpdated: today,
+                rules: cloneRules(mergedRules),
+                draftRules: [],
+                versionHistory: [
+                  newSnapshot,
+                  ...(p.versionHistory || []).map((vh) => ({
+                    ...vh,
+                    rules: cloneRules(vh.rules),
+                  })),
+                ],
+              }
+            : p
+        )
       );
-      if (!isDuplicate) {
-        mergedRules.push({ ...dr });
-      }
-    });
 
-    const timestamp = nowUtcTimestamp();
-    const today = new Date().toISOString().split('T')[0];
-    const newSnapshot: PolicyVersionSnapshot = {
-      version: nextVersion,
-      publishedAt: timestamp,
-      publishedBy: settings.reviewerName,
-      changeSummary:
-        releaseNotes?.trim() ||
-        `Published ${drafts.length} staged draft clause(s) (${drafts
-          .map((d) => d.code)
-          .join(', ')}).`,
-      rules: mergedRules.map((r) => ({ ...r })),
-    };
+      addToast(
+        'New Policy Version Published',
+        `${policy.name} is now active at ${nextVersion} (${mergedRules.length} total rules).`
+      );
 
-    setPolicies((prev) =>
-      prev.map((p) =>
-        p.id === policyId
-          ? {
-              ...p,
-              status: 'Active',
-              version: nextVersion,
-              lastUpdated: today,
-              rules: mergedRules,
-              draftRules: [],
-              versionHistory: [newSnapshot, ...(p.versionHistory || [])],
-            }
-          : p
-      )
-    );
-
-    addToast(
-      'New Policy Version Published',
-      `${policy.name} is now active at ${nextVersion} (${mergedRules.length} total rules).`
-    );
-
-    return {
-      ok: true,
-      message: `Published ${policy.name} ${nextVersion}.`,
-      publishedVersion: nextVersion,
-    };
+      return {
+        ok: true,
+        message: `Published ${policy.name} ${nextVersion}.`,
+        publishedVersion: nextVersion,
+      };
+    } finally {
+      publishingLockRef.current = false;
+      setIsPublishingSession(false);
+    }
   };
 
   // Compilation Session & Candidate Governance Actions
@@ -599,6 +755,10 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const sessionId = `CS-2026-0${nextNum}`;
     const timestamp = nowUtcTimestamp();
 
+    const validTarget = policies.find((p) => p.id === targetPolicyId && p.status !== 'Archived');
+    const fallbackTarget = policies.find((p) => p.status !== 'Archived') || policies[0];
+    const resolvedTargetId = validTarget ? validTarget.id : fallbackTarget.id;
+
     const candidates: CompiledCandidateRule[] = extractedCandidates.map((c, idx) => ({
       ...c,
       id: `cand-${sessionId.toLowerCase()}-${idx + 1}`,
@@ -611,7 +771,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       id: sessionId,
       title: title.trim() || `Compilation Session ${sessionId}`,
       sourceText,
-      targetPolicyId,
+      targetPolicyId: resolvedTargetId,
       createdAt: timestamp,
       updatedAt: timestamp,
       status: 'In Review',
@@ -623,7 +783,50 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return newSession;
   };
 
-  const setSessionTargetPolicy = (sessionId: string, targetPolicyId: string) => {
+  const validateSessionAndPolicyBeforeOperation = (
+    session: CompilationSession | undefined,
+    overridePolicyId?: string
+  ): { ok: boolean; message: string; targetPolicy?: Policy } => {
+    if (publishingLockRef.current || isPublishingSession) {
+      return {
+        ok: false,
+        message: 'Operation blocked: Session publication is currently in progress.',
+      };
+    }
+    if (!session) {
+      return { ok: false, message: 'Compilation session not found.' };
+    }
+    if (session.status === 'Published') {
+      return {
+        ok: false,
+        message: `Session ${session.id} is already published (${session.publishedVersion}) and is locked against modifications.`,
+      };
+    }
+    const targetId = overridePolicyId || session.targetPolicyId;
+    const targetPolicy = policies.find((p) => p.id === targetId);
+    if (!targetPolicy) {
+      return {
+        ok: false,
+        message: `Target policy '${targetId}' does not exist.`,
+      };
+    }
+    if (targetPolicy.status === 'Archived') {
+      return {
+        ok: false,
+        message: `Target policy "${targetPolicy.name}" is Archived and cannot be targeted by compilation operations.`,
+      };
+    }
+    return { ok: true, message: 'Valid', targetPolicy };
+  };
+
+  const setSessionTargetPolicy = (sessionId: string, targetPolicyId: string): ActionResult => {
+    const session = compilationSessions.find((s) => s.id === sessionId);
+    const check = validateSessionAndPolicyBeforeOperation(session, targetPolicyId);
+    if (!check.ok) {
+      addToast('Operation Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
+    }
+
     setCompilationSessions((prev) =>
       prev.map((s) =>
         s.id === sessionId
@@ -631,20 +834,39 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : s
       )
     );
+    return { ok: true, message: `Target policy updated to ${check.targetPolicy?.name}.` };
   };
 
-  const updateCandidateRule = (id: string, updates: Partial<CompiledCandidateRule>) => {
+  const updateCandidateRule = (
+    id: string,
+    updates: Partial<CompiledCandidateRule>
+  ): ActionResult => {
+    const session = compilationSessions.find((s) => s.candidates.some((c) => c.id === id));
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok) {
+      addToast('Modification Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
+    }
+
+    const candidate = session!.candidates.find((c) => c.id === id)!;
+    if (candidate.publishedVersion) {
+      const msg = `Candidate ${candidate.suggestedCode} has already been published in ${candidate.publishedVersion} and cannot be modified.`;
+      addToast('Candidate Locked', msg, 'warning');
+      return { ok: false, message: msg };
+    }
+
     const timestamp = nowUtcTimestamp();
     setCompilationSessions((prev) =>
-      prev.map((session) => {
-        if (!session.candidates.some((c) => c.id === id)) return session;
+      prev.map((s) => {
+        if (s.id !== session!.id || s.status === 'Published') return s;
         return {
-          ...session,
+          ...s,
           updatedAt: timestamp,
-          candidates: session.candidates.map((c) => (c.id === id ? { ...c, ...updates } : c)),
+          candidates: s.candidates.map((c) => (c.id === id ? { ...c, ...updates } : c)),
         };
       })
     );
+    return { ok: true, message: 'Candidate rule updated.' };
   };
 
   const resolveCandidateAmbiguity = (
@@ -654,6 +876,15 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     suggestedCode?: string,
     evidenceRequired?: string
   ): ActionResult => {
+    const session = compilationSessions.find((s) =>
+      s.candidates.some((c) => c.id === candidateId)
+    );
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok) {
+      addToast('Operation Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
+    }
+
     if (!clarifiedRuleText.trim()) {
       return { ok: false, message: 'Clarified rule specification cannot be empty.' };
     }
@@ -666,14 +897,12 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const timestamp = nowUtcTimestamp();
     setCompilationSessions((prev) =>
-      prev.map((session) => {
-        if (!session.candidates.some((c) => c.id === candidateId)) return session;
-        if (session.status === 'Published') return session;
-
+      prev.map((s) => {
+        if (s.id !== session!.id || s.status === 'Published') return s;
         return {
-          ...session,
+          ...s,
           updatedAt: timestamp,
-          candidates: session.candidates.map((c) => {
+          candidates: s.candidates.map((c) => {
             if (c.id !== candidateId) return c;
             return {
               ...c,
@@ -697,17 +926,27 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return { ok: true, message: 'Ambiguity resolved.' };
   };
 
-  const markCandidateNeedsClarification = (candidateId: string, note?: string) => {
+  const markCandidateNeedsClarification = (
+    candidateId: string,
+    note?: string
+  ): ActionResult => {
+    const session = compilationSessions.find((s) =>
+      s.candidates.some((c) => c.id === candidateId)
+    );
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok) {
+      addToast('Operation Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
+    }
+
     const timestamp = nowUtcTimestamp();
     setCompilationSessions((prev) =>
-      prev.map((session) => {
-        if (!session.candidates.some((c) => c.id === candidateId)) return session;
-        if (session.status === 'Published') return session;
-
+      prev.map((s) => {
+        if (s.id !== session!.id || s.status === 'Published') return s;
         return {
-          ...session,
+          ...s,
           updatedAt: timestamp,
-          candidates: session.candidates.map((c) => {
+          candidates: s.candidates.map((c) => {
             if (c.id !== candidateId) return c;
             const flagging = !(c.isAmbiguous || c.status === 'Needs Clarification');
             if (flagging) {
@@ -736,6 +975,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         };
       })
     );
+    return { ok: true, message: 'Clarification flag updated.' };
   };
 
   const approveCandidateInSession = (
@@ -745,83 +985,53 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const session = compilationSessions.find((s) =>
       s.candidates.some((c) => c.id === candidateId)
     );
-    if (!session) {
-      return { ok: false, message: 'Compilation session not found.' };
-    }
-    if (session.status === 'Published') {
-      return {
-        ok: false,
-        message: `Session ${session.id} has already been published (${session.publishedVersion}). Duplicate promotion is blocked.`,
-      };
+    const check = validateSessionAndPolicyBeforeOperation(session, targetPolicyId);
+    if (!check.ok || !check.targetPolicy) {
+      addToast('Approval Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
     }
 
-    const candidate = session.candidates.find((c) => c.id === candidateId)!;
+    const candidate = session!.candidates.find((c) => c.id === candidateId)!;
+    const targetPolicy = check.targetPolicy;
 
-    // Validate target policy
-    const effectivePolicyId = targetPolicyId || session.targetPolicyId;
-    const targetPolicy = policies.find((p) => p.id === effectivePolicyId);
-    if (!targetPolicy) {
-      addToast('Invalid Target Policy', 'Select a valid target policy before approving.', 'warning');
-      return { ok: false, message: 'Target policy does not exist.' };
-    }
-    if (targetPolicy.status === 'Archived') {
-      addToast(
-        'Target Policy Archived',
-        `Cannot approve rules for archived policy "${targetPolicy.name}". Restore it first.`,
-        'warning'
-      );
-      return {
-        ok: false,
-        message: `Target policy "${targetPolicy.name}" is Archived and cannot accept rule approvals.`,
-      };
-    }
-
-    // Prevent ambiguous / Needs Clarification rules from being approved until resolved
+    // 1. Prevent ambiguous / Needs Clarification rules from being approved until resolved
     if (
       (candidate.isAmbiguous && !candidate.ambiguityResolved) ||
       candidate.status === 'Needs Clarification'
     ) {
-      addToast(
-        'Ambiguity Resolution Required',
-        `Clause ${candidate.suggestedCode} is flagged as ambiguous. Edit and resolve ambiguity before approving.`,
-        'warning'
-      );
-      return {
-        ok: false,
-        message: `Cannot approve ${candidate.suggestedCode}: Ambiguous clauses must be clarified and resolved before approval.`,
-      };
+      const msg = `Cannot approve ${candidate.suggestedCode}: Ambiguous clauses must be clarified and resolved before approval.`;
+      addToast('Ambiguity Resolution Required', msg, 'warning');
+      return { ok: false, message: msg };
     }
 
-    // Prevent duplicate promotion if already published
-    if (candidate.publishedVersion) {
-      addToast(
-        'Duplicate Promotion Blocked',
-        `Clause ${candidate.suggestedCode} was already published in ${candidate.publishedVersion}.`,
-        'warning'
-      );
-      return {
-        ok: false,
-        message: `Clause ${candidate.suggestedCode} has already been promoted.`,
-      };
+    // 2. Prevent duplicate promotion if already published in this or another session or already present in target policy
+    const alreadyInTargetActive = targetPolicy.rules.some(
+      (r) =>
+        r.code.toLowerCase() === candidate.suggestedCode.toLowerCase() ||
+        r.description.trim().toLowerCase() === candidate.extractedRule.trim().toLowerCase()
+    );
+    if (candidate.publishedVersion || alreadyInTargetActive) {
+      const msg = `Duplicate promotion blocked: Clause ${candidate.suggestedCode} already exists in ${targetPolicy.name} (${
+        candidate.publishedVersion || targetPolicy.version
+      }).`;
+      addToast('Duplicate Promotion Blocked', msg, 'warning');
+      return { ok: false, message: msg };
     }
 
-    // Check if already approved in current session
+    // 3. Prevent duplicate approval in same session
     if (candidate.status === 'Approved') {
-      addToast(
-        'Already Approved in Session',
-        `Clause ${candidate.suggestedCode} is already approved by ${candidate.approvedBy}.`,
-        'info'
-      );
-      return { ok: false, message: 'Candidate rule is already approved in this session.' };
+      const msg = `Clause ${candidate.suggestedCode} is already approved in session ${session!.id} by ${candidate.approvedBy}.`;
+      addToast('Already Approved in Session', msg, 'info');
+      return { ok: false, message: msg };
     }
 
     const timestamp = nowUtcTimestamp();
     setCompilationSessions((prev) =>
       prev.map((s) => {
-        if (s.id !== session.id) return s;
+        if (s.id !== session!.id || s.status === 'Published') return s;
         return {
           ...s,
-          targetPolicyId: effectivePolicyId,
+          targetPolicyId: targetPolicy.id,
           updatedAt: timestamp,
           candidates: s.candidates.map((c) =>
             c.id === candidateId
@@ -843,27 +1053,34 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       'Rule Approved in Session',
       `${candidate.suggestedCode} approved by ${settings.reviewerName}. Open "Review Compilation" to publish.`
     );
-    return { ok: true, message: `Approved ${candidate.suggestedCode} in session ${session.id}.` };
+    return {
+      ok: true,
+      message: `Approved ${candidate.suggestedCode} in session ${session!.id}.`,
+    };
   };
 
   const rejectCandidateRule = (candidateId: string): ActionResult => {
     const session = compilationSessions.find((s) =>
       s.candidates.some((c) => c.id === candidateId)
     );
-    if (!session) return { ok: false, message: 'Session not found.' };
-    if (session.status === 'Published') {
-      addToast(
-        'Session Locked',
-        `Session ${session.id} is already published and cannot be modified.`,
-        'warning'
-      );
-      return { ok: false, message: 'Session is already published.' };
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok) {
+      addToast('Rejection Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
+    }
+
+    const candidate = session!.candidates.find((c) => c.id === candidateId)!;
+    if (candidate.publishedVersion) {
+      return {
+        ok: false,
+        message: `Cannot reject ${candidate.suggestedCode}: already published in ${candidate.publishedVersion}.`,
+      };
     }
 
     const timestamp = nowUtcTimestamp();
     setCompilationSessions((prev) =>
       prev.map((s) => {
-        if (s.id !== session.id) return s;
+        if (s.id !== session!.id || s.status === 'Published') return s;
         return {
           ...s,
           updatedAt: timestamp,
@@ -893,43 +1110,37 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const saveCompilationAsDraft = (sessionId: string): ActionResult => {
     const session = compilationSessions.find((s) => s.id === sessionId);
-    if (!session) return { ok: false, message: 'Compilation session not found.' };
-    if (session.status === 'Published') {
-      addToast(
-        'Already Published',
-        `Session ${session.id} is already published (${session.publishedVersion}).`,
-        'warning'
-      );
-      return { ok: false, message: 'Cannot save a published session as draft.' };
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok || !check.targetPolicy) {
+      addToast('Draft Save Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
     }
 
-    const targetPolicy = policies.find((p) => p.id === session.targetPolicyId);
-    if (!targetPolicy) {
-      return { ok: false, message: 'Target policy not found.' };
-    }
-
-    const approvedCandidates = session.candidates.filter((c) => c.status === 'Approved');
+    const targetPolicy = check.targetPolicy;
+    const approvedCandidates = session!.candidates.filter(
+      (c) => c.status === 'Approved' && !c.isAmbiguous
+    );
     const timestamp = nowUtcTimestamp();
     const today = new Date().toISOString().split('T')[0];
 
-    // Stage approved rules into the target policy's draftRules (without touching active rules!)
+    // Stage approved rules into the target policy's draftRules without duplicating rules or altering active rules
     if (approvedCandidates.length > 0) {
       setPolicies((prev) =>
         prev.map((pol) => {
           if (pol.id !== targetPolicy.id) return pol;
-          const existingDrafts = pol.draftRules || [];
+          const existingDrafts = cloneRules(pol.draftRules || []);
           const nextDrafts = [...existingDrafts];
 
           approvedCandidates.forEach((cand) => {
             const alreadyInDraft = nextDrafts.some(
               (dr) =>
-                dr.code === cand.suggestedCode &&
-                dr.description.trim() === cand.extractedRule.trim()
+                dr.code.toLowerCase() === cand.suggestedCode.toLowerCase() ||
+                dr.description.trim().toLowerCase() === cand.extractedRule.trim().toLowerCase()
             );
             const alreadyInActive = pol.rules.some(
               (ar) =>
-                ar.code === cand.suggestedCode &&
-                ar.description.trim() === cand.extractedRule.trim()
+                ar.code.toLowerCase() === cand.suggestedCode.toLowerCase() ||
+                ar.description.trim().toLowerCase() === cand.extractedRule.trim().toLowerCase()
             );
 
             if (!alreadyInDraft && !alreadyInActive) {
@@ -941,7 +1152,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 .slice(0, 6);
 
               nextDrafts.push({
-                id: `draft-${session.id.toLowerCase()}-${cand.id}`,
+                id: `draft-${session!.id.toLowerCase()}-${cand.id}`,
                 code: cand.suggestedCode,
                 title:
                   cand.extractedRule.length > 68
@@ -975,12 +1186,12 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     addToast(
       'Compilation Saved as Draft',
-      `Session ${session.id} saved (${approvedCandidates.length} approved rule(s) staged in ${targetPolicy.name} draft workspace; active policy unchanged).`
+      `Session ${session!.id} saved (${approvedCandidates.length} approved rule(s) staged in ${targetPolicy.name} draft workspace; active policy unchanged).`
     );
 
     return {
       ok: true,
-      message: `Session ${session.id} saved as draft.`,
+      message: `Session ${session!.id} saved as draft.`,
     };
   };
 
@@ -988,42 +1199,30 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     sessionId: string,
     releaseNotes?: string
   ): ActionResult => {
+    // Temporary operation lock while publishing
+    if (publishingLockRef.current || isPublishingSession) {
+      return {
+        ok: false,
+        message: 'Publication lock active: Another publication operation is currently in progress.',
+      };
+    }
+
     const session = compilationSessions.find((s) => s.id === sessionId);
-    if (!session) {
-      return { ok: false, message: 'Compilation session not found.' };
+    const check = validateSessionAndPolicyBeforeOperation(session);
+    if (!check.ok || !check.targetPolicy) {
+      addToast('Publication Blocked', check.message, 'warning');
+      return { ok: false, message: check.message };
     }
 
-    // Prevent duplicate publication of the same session
-    if (session.status === 'Published') {
-      addToast(
-        'Duplicate Publication Blocked',
-        `Compilation session ${session.id} was already published as ${session.publishedVersion}.`,
-        'warning'
-      );
-      return {
-        ok: false,
-        message: `Compilation session ${session.id} has already been published (${session.publishedVersion}).`,
-      };
-    }
+    const targetPolicy = check.targetPolicy;
 
-    const targetPolicy = policies.find((p) => p.id === session.targetPolicyId);
-    if (!targetPolicy) {
-      return { ok: false, message: 'Selected target policy does not exist.' };
-    }
-    if (targetPolicy.status === 'Archived') {
-      return {
-        ok: false,
-        message: `Target policy "${targetPolicy.name}" is Archived. Restore it before publishing.`,
-      };
-    }
-
-    const pendingRules = session.candidates.filter((c) => c.status === 'Pending');
-    const unresolvedRules = session.candidates.filter(
+    const pendingRules = session!.candidates.filter((c) => c.status === 'Pending');
+    const unresolvedRules = session!.candidates.filter(
       (c) =>
         c.status === 'Needs Clarification' || (c.isAmbiguous && !c.ambiguityResolved)
     );
-    const approvedRules = session.candidates.filter(
-      (c) => c.status === 'Approved' && !c.isAmbiguous
+    const approvedRules = session!.candidates.filter(
+      (c) => c.status === 'Approved' && !c.isAmbiguous && !c.publishedVersion
     );
 
     if (unresolvedRules.length > 0) {
@@ -1043,142 +1242,166 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (approvedRules.length === 0) {
       return {
         ok: false,
-        message: 'Cannot publish: At least one candidate rule must be Approved.',
+        message: 'Cannot publish: At least one unpromoted candidate rule must be Approved.',
       };
     }
 
-    const existingVersions = [
-      targetPolicy.version,
-      ...(targetPolicy.versionHistory || []).map((vh) => vh.version),
-    ];
-    const nextVersion =
-      targetPolicy.status === 'Draft' && (targetPolicy.versionHistory || []).length === 0
-        ? targetPolicy.version
-        : getNextUniqueVersion(targetPolicy.version, existingVersions);
+    publishingLockRef.current = true;
+    setIsPublishingSession(true);
 
-    const timestamp = nowUtcTimestamp();
-    const today = new Date().toISOString().split('T')[0];
+    try {
+      const existingVersions = [
+        targetPolicy.version,
+        ...(targetPolicy.versionHistory || []).map((vh) => vh.version),
+      ];
+      const nextVersion =
+        targetPolicy.status === 'Draft' && (targetPolicy.versionHistory || []).length === 0
+          ? targetPolicy.version
+          : getNextUniqueVersion(targetPolicy.version, existingVersions);
 
-    // Build newly promoted PolicyRules, preventing duplicates against existing active rules
-    const baseActiveRules: PolicyRule[] =
-      targetPolicy.status === 'Draft' &&
-      targetPolicy.rules.length === 0 &&
-      (targetPolicy.draftRules || []).length > 0
-        ? [...(targetPolicy.draftRules || [])]
-        : [...targetPolicy.rules];
+      const timestamp = nowUtcTimestamp();
+      const today = new Date().toISOString().split('T')[0];
 
-    const newlyAddedCodes: string[] = [];
+      const baseActiveRules: PolicyRule[] =
+        targetPolicy.status === 'Draft' &&
+        targetPolicy.rules.length === 0 &&
+        (targetPolicy.draftRules || []).length > 0
+          ? cloneRules(targetPolicy.draftRules || [])
+          : cloneRules(targetPolicy.rules);
 
-    approvedRules.forEach((cand) => {
-      const alreadyExists = baseActiveRules.some(
-        (r) =>
-          r.code === cand.suggestedCode &&
-          r.description.trim() === cand.extractedRule.trim()
-      );
-      if (!alreadyExists) {
-        const extractedWords = cand.extractedRule
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .split(/\s+/)
-          .filter((w) => w.length > 4)
-          .slice(0, 6);
+      const newlyAddedCodes: string[] = [];
 
-        baseActiveRules.push({
-          id: `rule-${session.id.toLowerCase()}-${cand.id}`,
-          code: cand.suggestedCode || `RULE-${baseActiveRules.length + 101}`,
-          title:
-            cand.extractedRule.length > 68
-              ? `${cand.extractedRule.slice(0, 65)}...`
-              : cand.extractedRule,
-          description: cand.extractedRule,
-          severity: cand.severity,
-          evidenceRequired: cand.evidenceRequired,
-          keywords: extractedWords.length > 0 ? extractedWords : ['compliance', 'disclosure'],
-          isAmbiguous: false,
-          sourceExcerpt: cand.sourceExcerpt,
-          approvedBy: cand.approvedBy || settings.reviewerName,
-          approvedAt: cand.approvedAt || timestamp,
-        });
-        newlyAddedCodes.push(cand.suggestedCode);
-      }
-    });
-
-    const summaryNote =
-      releaseNotes?.trim() ||
-      `Published compilation session ${session.id}: added ${
-        newlyAddedCodes.length > 0 ? newlyAddedCodes.join(', ') : `${approvedRules.length} rule(s)`
-      }.`;
-
-    const newVersionSnapshot: PolicyVersionSnapshot = {
-      version: nextVersion,
-      publishedAt: timestamp,
-      publishedBy: settings.reviewerName,
-      changeSummary: summaryNote,
-      sourceSessionId: session.id,
-      rules: baseActiveRules.map((r) => ({ ...r })),
-    };
-
-    // Update Policy with new version, active rules, cleared staged drafts from this session, and preserved versionHistory
-    setPolicies((prev) =>
-      prev.map((pol) => {
-        if (pol.id !== targetPolicy.id) return pol;
-        const remainingDrafts = (pol.draftRules || []).filter(
-          (dr) => !approvedRules.some((ar) => ar.suggestedCode === dr.code)
+      approvedRules.forEach((cand) => {
+        const alreadyExists = baseActiveRules.some(
+          (r) =>
+            r.code.toLowerCase() === cand.suggestedCode.toLowerCase() ||
+            r.description.trim().toLowerCase() === cand.extractedRule.trim().toLowerCase()
         );
+        if (!alreadyExists) {
+          const extractedWords = cand.extractedRule
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .split(/\s+/)
+            .filter((w) => w.length > 4)
+            .slice(0, 6);
+
+          baseActiveRules.push({
+            id: `rule-${session!.id.toLowerCase()}-${cand.id}`,
+            code: cand.suggestedCode || `RULE-${baseActiveRules.length + 101}`,
+            title:
+              cand.extractedRule.length > 68
+                ? `${cand.extractedRule.slice(0, 65)}...`
+                : cand.extractedRule,
+            description: cand.extractedRule,
+            severity: cand.severity,
+            evidenceRequired: cand.evidenceRequired,
+            keywords: extractedWords.length > 0 ? extractedWords : ['compliance', 'disclosure'],
+            isAmbiguous: false,
+            sourceExcerpt: cand.sourceExcerpt,
+            approvedBy: cand.approvedBy || settings.reviewerName,
+            approvedAt: cand.approvedAt || timestamp,
+          });
+          newlyAddedCodes.push(cand.suggestedCode);
+        }
+      });
+
+      if (newlyAddedCodes.length === 0) {
         return {
-          ...pol,
-          status: 'Active',
-          version: nextVersion,
-          lastUpdated: today,
-          rules: baseActiveRules,
-          draftRules: remainingDrafts,
-          versionHistory: [newVersionSnapshot, ...(pol.versionHistory || [])],
+          ok: false,
+          message:
+            'Duplicate promotion blocked: All approved candidate rules in this session already exist in the target policy.',
         };
-      })
-    );
+      }
 
-    // Lock Compilation Session as Published
-    setCompilationSessions((prev) =>
-      prev.map((s) =>
-        s.id === session.id
-          ? {
-              ...s,
-              status: 'Published',
-              updatedAt: timestamp,
-              publishedVersion: nextVersion,
-              publishedAt: timestamp,
-              publishedBy: settings.reviewerName,
-              releaseNotes: summaryNote,
-              candidates: s.candidates.map((c) =>
-                c.status === 'Approved'
-                  ? {
-                      ...c,
-                      promotedToPolicyId: targetPolicy.id,
-                      publishedVersion: nextVersion,
-                    }
-                  : c
-              ),
-            }
-          : s
-      )
-    );
+      const summaryNote =
+        releaseNotes?.trim() ||
+        `Published compilation session ${session!.id}: added ${newlyAddedCodes.join(', ')}.`;
 
-    addToast(
-      'Policy Version Published',
-      `${targetPolicy.name} published as ${nextVersion} from session ${session.id}.`
-    );
+      const newVersionSnapshot: PolicyVersionSnapshot = {
+        version: nextVersion,
+        publishedAt: timestamp,
+        publishedBy: settings.reviewerName,
+        changeSummary: summaryNote,
+        sourceSessionId: session!.id,
+        rules: cloneRules(baseActiveRules),
+      };
 
-    return {
-      ok: true,
-      message: `Successfully published ${targetPolicy.name} (${nextVersion}).`,
-      publishedVersion: nextVersion,
-    };
+      // Update Policy with new version, deep-cloned active rules, and preserved historical snapshots
+      setPolicies((prev) =>
+        prev.map((pol) => {
+          if (pol.id !== targetPolicy.id) return pol;
+          const remainingDrafts = (pol.draftRules || []).filter(
+            (dr) =>
+              !approvedRules.some(
+                (ar) =>
+                  ar.suggestedCode.toLowerCase() === dr.code.toLowerCase() ||
+                  ar.extractedRule.trim().toLowerCase() === dr.description.trim().toLowerCase()
+              )
+          );
+          return {
+            ...pol,
+            status: 'Active',
+            version: nextVersion,
+            lastUpdated: today,
+            rules: cloneRules(baseActiveRules),
+            draftRules: cloneRules(remainingDrafts),
+            versionHistory: [
+              newVersionSnapshot,
+              ...(pol.versionHistory || []).map((vh) => ({
+                ...vh,
+                rules: cloneRules(vh.rules),
+              })),
+            ],
+          };
+        })
+      );
+
+      // Lock Compilation Session as Published
+      setCompilationSessions((prev) =>
+        prev.map((s) =>
+          s.id === session!.id
+            ? {
+                ...s,
+                status: 'Published',
+                updatedAt: timestamp,
+                publishedVersion: nextVersion,
+                publishedAt: timestamp,
+                publishedBy: settings.reviewerName,
+                releaseNotes: summaryNote,
+                candidates: s.candidates.map((c) =>
+                  c.status === 'Approved'
+                    ? {
+                        ...c,
+                        promotedToPolicyId: targetPolicy.id,
+                        publishedVersion: nextVersion,
+                      }
+                    : c
+                ),
+              }
+            : s
+        )
+      );
+
+      addToast(
+        'Policy Version Published',
+        `${targetPolicy.name} published as ${nextVersion} from session ${session!.id}.`
+      );
+
+      return {
+        ok: true,
+        message: `Successfully published ${targetPolicy.name} (${nextVersion}).`,
+        publishedVersion: nextVersion,
+      };
+    } finally {
+      publishingLockRef.current = false;
+      setIsPublishingSession(false);
+    }
   };
 
   const setCandidateRulesList = (rules: CompiledCandidateRule[]) => {
     setCompilationSessions((prev) =>
       prev.map((s) =>
-        s.id === activeSessionId
+        s.id === activeSessionId && s.status !== 'Published'
           ? { ...s, candidates: rules, updatedAt: nowUtcTimestamp() }
           : s
       )
@@ -1189,34 +1412,48 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     approveCandidateInSession(candidateId, targetPolicyId);
   };
 
+  /**
+   * Phase 1A.1 Critical Correction:
+   * - Remove automatic fallback to the first active policy.
+   * - If the requested policy ID does not exist, return a clear error.
+   * - If the requested policy is Draft or Archived, reject verification.
+   * - Never silently substitute another policy.
+   */
   const runDeterministicVerification = (
     contentTitle: string,
     contentRevision: string,
     contentBody: string,
     policyId: string
   ): { findings: VerificationFinding[]; auditRecord?: AuditRecord; error?: string } => {
-    // Verification Integration: Must use ONLY currently active published version
-    const requestedPolicy = policies.find((p) => p.id === policyId);
-    const activePolicies = policies.filter((p) => p.status === 'Active');
-    const policy =
-      requestedPolicy && requestedPolicy.status === 'Active'
-        ? requestedPolicy
-        : activePolicies[0];
-
-    if (!policy || policy.status !== 'Active') {
-      addToast(
-        'Active Published Policy Required',
-        'Content Verification only evaluates against Active published policy versions.',
-        'warning'
-      );
-      return {
-        findings: [],
-        error: 'Selected policy is not an Active published version.',
-      };
+    if (!policyId || !policyId.trim()) {
+      const msg = 'Verification rejected: No target policy ID was provided.';
+      addToast('Verification Rejected', msg, 'warning');
+      return { findings: [], error: msg };
     }
 
-    // Active published rules snapshot
-    const activeRulesSnapshot: PolicyRule[] = policy.rules.map((r) => ({ ...r }));
+    const requestedPolicy = policies.find((p) => p.id === policyId);
+
+    if (!requestedPolicy) {
+      const msg = `Verification rejected: Requested policy ID "${policyId}" does not exist in the Policy Library. No fallback policy was substituted.`;
+      addToast('Nonexistent Policy Rejected', msg, 'warning');
+      return { findings: [], error: msg };
+    }
+
+    if (requestedPolicy.status === 'Draft') {
+      const msg = `Verification rejected: Policy "${requestedPolicy.name}" (${requestedPolicy.version}) is currently in Draft status and has no active published version. Publish the policy before verifying content.`;
+      addToast('Draft Policy Rejected', msg, 'warning');
+      return { findings: [], error: msg };
+    }
+
+    if (requestedPolicy.status === 'Archived') {
+      const msg = `Verification rejected: Policy "${requestedPolicy.name}" (${requestedPolicy.version}) is Archived and cannot be used for compliance verification.`;
+      addToast('Archived Policy Rejected', msg, 'warning');
+      return { findings: [], error: msg };
+    }
+
+    // Verified Active Policy — take an immutable deep clone of its active published rules
+    const policy = requestedPolicy;
+    const activeRulesSnapshot: PolicyRule[] = cloneRules(policy.rules);
 
     const matchingSample = SAMPLE_CONTENT_DRAFTS.find(
       (d) => d.content.trim() === contentBody.trim() && d.policyId === policy.id
@@ -1230,8 +1467,6 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         id: `find-${Date.now()}-${index}`,
       }));
 
-      // If the active policy has had new rules published beyond the initial baseline (e.g., ENV-105+, SEC-204+, FIN-303+),
-      // evaluate those newly published rules deterministically as well so publishing a new version is immediately reflected!
       const baselineCodes = new Set(matchingSample.presetFindings.map((pf) => pf.ruleCode));
       const newlyPublishedRules = activeRulesSnapshot.filter((r) => !baselineCodes.has(r.code));
 
@@ -1381,7 +1616,6 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const nextNum = 850 + auditRecords.length;
       const nowStr = nowUtcTimestamp();
 
-      // Store exact policyVersion and immutable policyRulesSnapshot
       createdAudit = {
         id: `REV-2026-0${nextNum}`,
         contentTitle: contentTitle.trim() || 'Untitled Marketing Asset',
@@ -1390,6 +1624,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         policyId: policy.id,
         policyName: policy.name,
         policyVersion: policy.version,
+        snapshotStatus: 'Available',
         policyRulesSnapshot: activeRulesSnapshot,
         reviewStatus: initialStatus,
         reviewer: `${settings.reviewerName} (Pending Sign-Off)`,
@@ -1477,10 +1712,10 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.removeItem(STORAGE_KEYS.RED_TEAM);
     localStorage.removeItem(STORAGE_KEYS.SETTINGS);
 
-    setPolicies(INITIAL_POLICIES);
+    setPolicies(migratePolicies(INITIAL_POLICIES));
     setCompilationSessions(INITIAL_COMPILATION_SESSIONS);
     setActiveSessionId(INITIAL_COMPILATION_SESSIONS[0].id);
-    setAuditRecords(INITIAL_AUDIT_RECORDS);
+    setAuditRecords(migrateAudits(INITIAL_AUDIT_RECORDS, INITIAL_POLICIES));
     setRedTeamScenarios(INITIAL_RED_TEAM_SCENARIOS);
     setSettings(INITIAL_SETTINGS);
     setSelectedPolicyIdForDetail(null);
@@ -1508,6 +1743,7 @@ export const VerifactaProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         auditRecords,
         redTeamScenarios,
         settings,
+        isPublishingSession,
         selectedPolicyIdForDetail,
         setSelectedPolicyIdForDetail,
         selectedAuditIdForDetail,

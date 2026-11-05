@@ -35,7 +35,6 @@ export const AuditTrail: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [rightPanelTab, setRightPanelTab] = useState<'findings' | 'snapshot'>('findings');
 
-  // Human Decision Form inside Detail View
   const [decisionNote, setDecisionNote] = useState<string>('');
 
   const selectedRecord = auditRecords.find((r) => r.id === selectedAuditIdForDetail) || null;
@@ -53,7 +52,6 @@ export const AuditTrail: React.FC = () => {
     return matchesStatus && matchesSearch;
   });
 
-  // Detail View if an Audit Record is selected
   if (selectedRecord) {
     const uniqueEvidenceRefs = Array.from(
       new Set(selectedRecord.findings.map((f) => f.evidenceReference))
@@ -63,6 +61,8 @@ export const AuditTrail: React.FC = () => {
     const isHistoricalVersion =
       currentLivePolicy && currentLivePolicy.version !== selectedRecord.policyVersion;
     const rulesSnapshot = selectedRecord.policyRulesSnapshot || [];
+    const snapshotAvailable =
+      selectedRecord.snapshotStatus === 'Available' && rulesSnapshot.length > 0;
 
     const handleRecordDecision = (newStatus: ReviewStatus) => {
       const note =
@@ -91,7 +91,16 @@ export const AuditTrail: React.FC = () => {
 
           <div className="flex items-center gap-3 text-xs text-slate-500">
             <Lock className="w-3.5 h-3.5 text-slate-400" />
-            <span>Version-Locked Audit Snapshot</span>
+            <span>
+              Snapshot Status:{' '}
+              <strong
+                className={
+                  snapshotAvailable ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'
+                }
+              >
+                {snapshotAvailable ? 'Available' : 'Unavailable'}
+              </strong>
+            </span>
             <span aria-hidden="true">·</span>
             <span className="font-mono font-semibold text-slate-800">{selectedRecord.id}</span>
           </div>
@@ -120,7 +129,7 @@ export const AuditTrail: React.FC = () => {
               </h2>
 
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                <span>Evaluated against Policy Version Snapshot:</span>
+                <span>Evaluated against Policy Version:</span>
                 <button
                   onClick={() => {
                     setSelectedPolicyIdForDetail(selectedRecord.policyId);
@@ -133,10 +142,22 @@ export const AuditTrail: React.FC = () => {
                     {selectedRecord.policyName} ({selectedRecord.policyVersion})
                   </span>
                 </button>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Rule Snapshot:{' '}
+                  <strong
+                    className={
+                      snapshotAvailable ? 'text-emerald-700' : 'text-amber-700'
+                    }
+                  >
+                    {snapshotAvailable
+                      ? `Available (${rulesSnapshot.length} clauses)`
+                      : 'Unavailable (Original version not archived)'}
+                  </strong>
+                </span>
                 {isHistoricalVersion && (
-                  <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-medium">
-                    Historical Version Preserved (Current Live Policy is{' '}
-                    {currentLivePolicy.version})
+                  <span className="text-[11px] text-slate-600">
+                    · Current Live Policy is {currentLivePolicy.version}
                   </span>
                 )}
               </div>
@@ -152,7 +173,6 @@ export const AuditTrail: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Column: Content Snapshot & Evidence References */}
           <div className="lg:col-span-5 space-y-6">
-            {/* Content Snapshot */}
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-display text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -168,7 +188,6 @@ export const AuditTrail: React.FC = () => {
               </div>
             </div>
 
-            {/* Evidence References Summary */}
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <h3 className="font-display text-sm font-bold text-slate-900 mb-1">
                 Linked Evidence References ({uniqueEvidenceRefs.length})
@@ -186,7 +205,6 @@ export const AuditTrail: React.FC = () => {
               </ul>
             </div>
 
-            {/* Human Review Sign-Off Panel */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
               <div>
                 <h3 className="font-display text-sm font-bold text-slate-900">
@@ -255,8 +273,7 @@ export const AuditTrail: React.FC = () => {
                   Audit Verification Record ({selectedRecord.policyVersion})
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Publishing newer policy versions never alters historical findings or the frozen
-                  rule snapshot below.
+                  Historical findings and original policy rule snapshot status ({selectedRecord.snapshotStatus || (snapshotAvailable ? 'Available' : 'Unavailable')}).
                 </p>
               </div>
 
@@ -279,7 +296,7 @@ export const AuditTrail: React.FC = () => {
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Policy Rule Snapshot ({rulesSnapshot.length})
+                  Rule Snapshot ({snapshotAvailable ? rulesSnapshot.length : 'Unavailable'})
                 </button>
               </div>
             </div>
@@ -317,19 +334,19 @@ export const AuditTrail: React.FC = () => {
                   </div>
                 ))}
               </div>
-            ) : (
+            ) : snapshotAvailable ? (
               <div>
                 <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600 flex items-center justify-between">
                   <span>
-                    Immutable Rule Snapshot for{' '}
-                    <strong className="text-slate-900">{selectedRecord.policyName}</strong> at
-                    version{' '}
+                    Verified Historical Rule Snapshot for{' '}
+                    <strong className="text-slate-900">{selectedRecord.policyName}</strong> (
                     <strong className="font-mono text-blue-700">
                       {selectedRecord.policyVersion}
                     </strong>
+                    )
                   </span>
-                  <span className="font-mono text-[11px] text-slate-500">
-                    {rulesSnapshot.length} clauses frozen
+                  <span className="font-mono text-[11px] text-emerald-700 font-semibold">
+                    Status: Available ({rulesSnapshot.length} clauses)
                   </span>
                 </div>
                 <div className="divide-y divide-slate-200">
@@ -352,6 +369,23 @@ export const AuditTrail: React.FC = () => {
                   ))}
                 </div>
               </div>
+            ) : (
+              <div className="p-10 text-center space-y-3">
+                <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+                <div className="space-y-1 max-w-lg mx-auto">
+                  <p className="text-sm font-bold text-slate-900">
+                    Historical Rule Snapshot Unavailable ({selectedRecord.policyVersion})
+                  </p>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    The original rule snapshot for{' '}
+                    <strong>{selectedRecord.policyName}</strong> version{' '}
+                    <strong className="font-mono">{selectedRecord.policyVersion}</strong> was not
+                    present in archived version history at the time of migration. In accordance with
+                    Verifacta governance standards, current active policy rules are never
+                    substituted as historical evidence.
+                  </p>
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -372,8 +406,8 @@ export const AuditTrail: React.FC = () => {
             Compliance Review & Proof-Carrying Audit Trail
           </h2>
           <p className="text-sm text-slate-600 mt-0.5 max-w-3xl">
-            Inspect historical content verifications, exact policy version snapshots, evidence
-            references, and human reviewer decisions across all marketing communications.
+            Inspect historical content verifications, exact policy version snapshots (Available vs.
+            Unavailable), evidence references, and human reviewer decisions.
           </p>
         </div>
       </div>
@@ -427,7 +461,7 @@ export const AuditTrail: React.FC = () => {
                   <th className="py-3 px-5">Review ID</th>
                   <th className="py-3 px-4">Content Title</th>
                   <th className="py-3 px-4">Content Revision</th>
-                  <th className="py-3 px-4">Policy Version Snapshot</th>
+                  <th className="py-3 px-4">Policy Version & Snapshot</th>
                   <th className="py-3 px-4">Review Status</th>
                   <th className="py-3 px-4">Reviewer</th>
                   <th className="py-3 px-4">Timestamp</th>
@@ -435,53 +469,66 @@ export const AuditTrail: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredRecords.map((rec) => (
-                  <tr
-                    key={rec.id}
-                    onClick={() => setSelectedAuditIdForDetail(rec.id)}
-                    className="hover:bg-slate-50 cursor-pointer transition-colors"
-                  >
-                    <td className="py-3.5 px-5 font-mono font-semibold text-blue-600 whitespace-nowrap tabular-nums">
-                      {rec.id}
-                    </td>
-                    <td className="py-3.5 px-4 font-semibold text-slate-900 max-w-xs truncate">
-                      {rec.contentTitle}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-600 whitespace-nowrap tabular-nums">
-                      {rec.contentRevision}
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className="text-slate-700 font-medium">{rec.policyName}</span>
-                      <span className="text-slate-400 mx-1">·</span>
-                      <span className="font-mono font-semibold text-slate-800 tabular-nums">
-                        {rec.policyVersion}
-                      </span>
-                      <span className="text-slate-400 mx-1">·</span>
-                      <span className="font-mono text-[11px] text-slate-500 tabular-nums">
-                        {rec.policyRulesSnapshot?.length || 0} rules
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <ReviewStatusIndicator status={rec.reviewStatus} />
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">{rec.reviewer}</td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap tabular-nums">
-                      {rec.timestamp}
-                    </td>
-                    <td
-                      className="py-3.5 px-5 text-right whitespace-nowrap"
-                      onClick={(e) => e.stopPropagation()}
+                {filteredRecords.map((rec) => {
+                  const isAvailable =
+                    rec.snapshotStatus === 'Available' &&
+                    (rec.policyRulesSnapshot?.length || 0) > 0;
+                  return (
+                    <tr
+                      key={rec.id}
+                      onClick={() => setSelectedAuditIdForDetail(rec.id)}
+                      className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
-                      <button
-                        onClick={() => setSelectedAuditIdForDetail(rec.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                      <td className="py-3.5 px-5 font-mono font-semibold text-blue-600 whitespace-nowrap tabular-nums">
+                        {rec.id}
+                      </td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-900 max-w-xs truncate">
+                        {rec.contentTitle}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-600 whitespace-nowrap tabular-nums">
+                        {rec.contentRevision}
+                      </td>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className="text-slate-700 font-medium">{rec.policyName}</span>
+                        <span className="text-slate-400 mx-1">·</span>
+                        <span className="font-mono font-semibold text-slate-800 tabular-nums">
+                          {rec.policyVersion}
+                        </span>
+                        <span className="text-slate-400 mx-1">·</span>
+                        {isAvailable ? (
+                          <span className="font-mono text-[11px] text-emerald-700 font-medium tabular-nums">
+                            Available ({rec.policyRulesSnapshot?.length} rules)
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[11px] text-amber-700 font-medium">
+                            Unavailable
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <ReviewStatusIndicator status={rec.reviewStatus} />
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">
+                        {rec.reviewer}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap tabular-nums">
+                        {rec.timestamp}
+                      </td>
+                      <td
+                        className="py-3.5 px-5 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Inspect</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        <button
+                          onClick={() => setSelectedAuditIdForDetail(rec.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Inspect</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

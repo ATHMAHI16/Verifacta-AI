@@ -867,6 +867,7 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
     policyId: 'pol-sec-002',
     policyName: 'Enterprise Cloud Security & SLA Representations',
     policyVersion: 'v2.3.0',
+    snapshotStatus: 'Available',
     policyRulesSnapshot: SEC_V2_3_RULES,
     reviewStatus: 'Approved',
     reviewer: 'Marcus Vance',
@@ -896,6 +897,35 @@ export const INITIAL_AUDIT_RECORDS: AuditRecord[] = [
       },
     ],
     humanDecisionNote: 'Verified against v2.3.0 SOC 2 attestation and MSA schedule. Approved.',
+  },
+  {
+    id: 'REV-2025-0412',
+    contentTitle: '2025 Legacy Packaging Circularity Brochure (Pre-Migration Archive)',
+    contentRevision: 'rev-1.0',
+    contentSnapshot: `Our 2025 regional transit cartons incorporate recycled corrugated board sourced from regional European mills.`,
+    policyId: 'pol-env-001',
+    policyName: 'Environmental & Sustainability Claims Policy',
+    policyVersion: 'v2.0.0',
+    snapshotStatus: 'Unavailable',
+    policyRulesSnapshot: [],
+    reviewStatus: 'Approved',
+    reviewer: 'Elena Rostova',
+    timestamp: '2025-05-18 11:20 UTC',
+    findings: [
+      {
+        id: 'find-init-412-1',
+        state: 'Supported',
+        excerpt:
+          '"Our 2025 regional transit cartons incorporate recycled corrugated board sourced from regional European mills."',
+        ruleCode: 'ENV-002',
+        ruleClause: 'Legacy Corrugated Fiber Sourcing Representation',
+        explanation: 'Evaluated under legacy policy v2.0.0 prior to version snapshot archiving.',
+        evidenceReference: '2025 Regional Mill Sourcing Attestation',
+        confidence: 91,
+      },
+    ],
+    humanDecisionNote:
+      'Legacy 2025 review migrated into audit log. Exact v2.0.0 rule snapshot was not archived in system storage and is marked Unavailable without substituting current v3.2.0 rules.',
   },
 ];
 
